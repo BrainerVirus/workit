@@ -2,25 +2,40 @@
 // ledger (<git common dir>/workit/ledger/) are written only by the workit CLI.
 // An agent's Edit/Write or shell write to either is denied.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
-import { unquotedWindowsRegistry } from "@/packages/workit-core/src/hooks/write-gate";
+import { inRepoLedger, unquotedWindowsRegistry } from "@/packages/workit-core/src/hooks/write-gate";
+import { editReaches, mayReach } from "@/packages/workit-core/src/hooks/write-reach";
+import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "./hook-fixtures";
 
 const base = mkdtempSync(path.join(tmpdir(), "workit-verdict-guard-"));
 const state = path.join(base, "state");
 const root = tempRoot("workit-verdict-guard-root-");
 const ledger = path.join(root, ".git", "workit", "ledger");
+// A bare repository's (or a `--separate-git-dir`'s) common dir: HEAD and objects, no `.git` name.
+const bare = path.join(base, "app.git");
+const bareLedger = path.join(bare, "workit", "ledger");
 const saved = process.env.WORKIT_STATE_DIR;
+let home: ConfigHome;
 beforeAll(() => {
   process.env.WORKIT_STATE_DIR = state;
+  home = useConfigHome("workit-verdict-guard-home-");
   mkdirSync(path.join(state, "verdicts", "sets"), { recursive: true });
   mkdirSync(ledger, { recursive: true });
   mkdirSync(path.join(state, "folders", "app-1a2b", "ledger"), { recursive: true });
+  mkdirSync(path.join(state, "issued"), { recursive: true });
+  mkdirSync(path.join(state, "approvals"), { recursive: true });
+  mkdirSync(path.join(bare, "objects"), { recursive: true });
+  writeFileSync(path.join(bare, "HEAD"), "ref: refs/heads/main\n");
+  mkdirSync(bareLedger, { recursive: true });
+  // A `workit/ledger` dir in a plain folder is no repository ledger.
+  mkdirSync(path.join(base, "notes", "workit", "ledger"), { recursive: true });
 });
 afterAll(() => {
+  home.restore();
   if (saved === undefined) delete process.env.WORKIT_STATE_DIR;
   else process.env.WORKIT_STATE_DIR = saved;
   rmSync(base, { recursive: true, force: true });
@@ -45,6 +60,7 @@ const TARGETS = [
   path.join(state, "verdicts", "sets", "ledger.jsonl"),
   path.join(state, "verdicts", "0123abcd", "ledger.jsonl"),
   path.join(ledger, "ledger.jsonl"),
+  path.join(bareLedger, "ledger.jsonl"),
 ];
 
 test("G the verdict store and a repository ledger, W Claude Code Edit/Write targets them, T denied by the ledger guard", () => {
@@ -87,4 +103,83 @@ test("G Windows paths with unquoted backslashes into the verdict store or a ledg
   } finally {
     process.env.WORKIT_STATE_DIR = prior;
   }
+});
+
+test("G a ledger under a git common dir not named .git (bare, --separate-git-dir), W written, T denied; a workit/ledger dir with no git dir above it passes", () => {
+  const file = path.join(bareLedger, "ledger.jsonl");
+  expect(claude("Write", { file_path: file })?.permissionDecision).toBe("deny");
+  expect(claude("Bash", { command: `echo x >> ${file}` })?.permissionDecision).toBe("deny");
+  expect(mayReach(`echo x >> ${file}`, root)).toBe(true);
+  expect(editReaches(file, root)).toBe(true);
+  const plain = path.join(base, "notes", "workit", "ledger", "n.txt");
+  expect(claude("Write", { file_path: plain })).toBeUndefined();
+  expect(claude("Bash", { command: `echo x >> ${plain}` })).toBeUndefined();
+  expect(editReaches(plain, root)).toBe(false);
+  // Every workit/ledger in the path counts, not only the last.
+  expect(inRepoLedger(path.join(bareLedger, "workit", "ledger", "x"))).toBe(true);
+  expect(inRepoLedger(path.join(base, "notes", "workit", "ledger", "x"))).toBe(false);
+});
+
+test("G a link or mount into a guarded registry, or of a dir holding one, then a write through it in the same command, W run, T denied before the link exists", () => {
+  // Each registry with a file in it (the config dir guards only workspaces.json and its seal).
+  const registries: Array<[string, string]> = [
+    [path.join(state, "issued"), "s.json"],
+    [path.join(state, "approvals"), "a.json"],
+    [path.join(state, "verdicts"), "ledger.jsonl"],
+    [path.join(state, "folders", "app-1a2b", "ledger"), "ledger.jsonl"],
+    [home.configDir, "workspaces.json"],
+    [ledger, "ledger.jsonl"],
+    [bareLedger, "ledger.jsonl"],
+  ];
+  const links = (source: string, name: string) => [
+    `ln -s ${source} l && echo x >> l/${name}`,
+    `ln ${source}/${name} l && echo x >> l`,
+    `ln -sf ${source} l; echo x >> l/${name}`,
+    `ln -sT ${source} l && echo x >> l/${name}`,
+    `ln --symbolic ${source} l && echo x >> l/${name}`,
+    `/bin/ln -s -- ${source} l && echo x >> l/${name}`,
+    `cp -s ${source}/${name} l && echo x >> l`,
+    `cp -l ${source}/${name} l && echo x >> l`,
+    `cp --link ${source}/${name} l && echo x >> l`,
+    `cp -rs ${source} l && echo x >> l/${name}`,
+    `cp --symbolic-link ${source}/${name} l && echo x >> l`,
+    `sudo mount --bind ${source} m && echo x >> m/${name}`,
+    `bindfs ${source} m && echo x >> m/${name}`,
+  ];
+  for (const [source, name] of registries)
+    for (const command of links(source, name)) {
+      const out = claude("Bash", { command });
+      expect([command, out?.permissionDecision]).toEqual([command, "deny"]);
+      expect(out?.permissionDecisionReason, command).toContain("links or mounts");
+      expect(mayReach(command, root), command).toBe(true);
+    }
+  // A dir that holds a registry or a ledger: the state dir, the config dir's
+  // parent, a git dir, the repository it is in, a ledger's workit dir.
+  for (const source of [
+    state,
+    path.dirname(home.configDir),
+    path.join(root, ".git"),
+    root,
+    bare,
+    path.dirname(bareLedger),
+  ]) {
+    const command = `ln -s ${source} up && echo x >> up/x`;
+    const out = claude("Bash", { command });
+    expect([command, out?.permissionDecision]).toEqual([command, "deny"]);
+    expect(out?.permissionDecisionReason).toContain("links or mounts");
+  }
+  // A relative symbolic source resolves from the link's dir.
+  const relative = path.relative(path.join(root, "sub"), path.join(state, "verdicts"));
+  expect(
+    claude("Bash", { command: `mkdir -p sub && ln -s ${relative} sub/v && echo x >> sub/v/x` })
+      ?.permissionDecision,
+  ).toBe("deny");
+  // Links that reach nothing guarded, and a plain copy out of a registry, pass.
+  for (const command of [
+    `ln -s ../node_modules nm && ls nm`,
+    `ln -sf ${path.join(base, "notes")} n && echo x >> n/x`,
+    `cp -s ${path.join(base, "notes", "a")} b`,
+    `cp ${path.join(state, "verdicts", "sets", "ledger.jsonl")} copy.jsonl`,
+  ])
+    expect(claude("Bash", { command }), command).toBeUndefined();
 });
