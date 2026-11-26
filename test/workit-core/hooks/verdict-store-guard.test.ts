@@ -158,6 +158,22 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
     `mklink l ${source}/${name}`,
     `cmd /c mklink /J l ${source}`,
     `cmd.exe /c "mklink /H l ${source}/${name}"`,
+    // A compound cmd string: every `&&`, `&`, `||` or `|` segment is judged.
+    `cmd /c "cd x && mklink /J l ${source}"`,
+    `cmd.exe /c "echo a & mklink /D l ${source}"`,
+    `cmd /c "dir || mklink /H l ${source}/${name}"`,
+    `cmd /C "echo a | mklink /J l ${source}"`,
+    // PowerShell's `;`-separated statements, run from a POSIX shell.
+    `powershell -Command "cd x; New-Item -ItemType SymbolicLink -Path l -Target ${source}"`,
+    `pwsh -c "Get-Date; ni l -ItemType Junction -Value ${source}"`,
+    // xargs or parallel fed a guarded path on stdin (here-string or heredoc).
+    `xargs -I{} ln -s {} l <<< ${source}`,
+    `xargs ln -s -t d <<< ${source}`,
+    `xargs -I {} cp -l {}/${name} l <<EOF\n${source}\nEOF`,
+    `xargs -I{} mklink /J l {} <<< ${source}`,
+    `xargs -I{} rsync -a --link-dest={} /tmp/empty/ d/ <<< ${source}`,
+    `xargs -I{} install -l s {}/${name} l <<< ${source}`,
+    `parallel ln -s {} l ::: ${source}`,
   ];
   for (const [source, name] of registries)
     for (const command of links(source, name)) {
@@ -189,6 +205,8 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
       `New-Item -ItemType SymbolicLink -Path l -Target ${source}`,
       `ni l -ItemType Junction -Value ${source}`,
       `New-Item -ItemType:HardLink -Path l -Target:${source}/${name}`,
+      `cmd /c "cd x && mklink /J l ${source}"`,
+      `Get-Date; pwsh -Command "cd x; ni l -ItemType Junction -Value ${source}"`,
     ]) {
       const out = shellGate(root, command, null, "powershell");
       expect([command, out.kind]).toEqual([command, "deny"]);
@@ -215,6 +233,9 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
     `rsync -a --link-dest=../prev ${path.join(base, "notes")}/ d/`,
     `install -m 644 ${path.join(base, "notes", "a")} b`,
     `mklink /D n ${path.join(base, "notes")}`,
+    `cmd /c "cd x && mklink /J n ${path.join(base, "notes")}"`,
+    `pwsh -c "Get-Date; ni n -ItemType Junction -Value ${path.join(base, "notes")}"`,
+    `xargs -I{} ln -s {} n <<< ${path.join(base, "notes")}`,
   ])
     expect(claude("Bash", { command }), command).toBeUndefined();
   expect(shellGate(root, "New-Item -ItemType Directory -Path x", null, "powershell").kind).not.toBe(

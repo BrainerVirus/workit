@@ -32,8 +32,12 @@ import { workspaceLiveSessionGuard } from "../core/workspaces";
 import { appendHookObserved, ledgerPath } from "../ledger";
 import type { HookDecision } from "./protocol";
 import {
+  cmdScript,
   inWorkitWorkspace,
+  parallelCommands,
+  powershellScript,
   rawInvocations,
+  xargsCommands,
   workitCheckTail,
   skipWorkitGlobals,
   workitInvocations,
@@ -779,6 +783,39 @@ const linkSources = (args: readonly string[], at: (file: string) => string | nul
   });
 };
 
+const commandName = (word: string) => (word.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+
+/** The commands `xargs` or `parallel` runs, stdin's words filled in; any other command as it is. */
+const fedRuns = (words: readonly string[], fed: string | undefined): string[][] => {
+  const run = words.slice(
+    Math.max(
+      0,
+      words.findIndex((word) => word === "xargs" || !PREFIXES.has(word)),
+    ),
+  );
+  const name = commandName(run[0] ?? "");
+  if (name === "xargs") return xargsCommands(run, fed);
+  if (name !== "parallel") return [run];
+  return parallelCommands(
+    fed === undefined || run.includes(":::")
+      ? run
+      : [...run, ":::", ...fed.split("\n").filter(Boolean)],
+  );
+};
+
+/** The script `cmd /c "…"` or `pwsh -c "…"` runs (PowerShell's tokenizer splits its statements). */
+const windowsScript = (input: readonly string[], stdin: string | undefined): string | null => {
+  const words = input.slice(
+    Math.max(
+      0,
+      input.findIndex((word) => !PREFIXES.has(word)),
+    ),
+  );
+  const name = commandName(words[0] ?? "").replace(/\.exe$/, "");
+  if (name === "cmd") return cmdScript(words);
+  return name === "pwsh" || name === "powershell" ? powershellScript(words, stdin) : null;
+};
+
 const WINDOWS_LINK_TYPE = /^(?:symboliclink|junction|hardlink)$/i;
 
 /**
@@ -786,7 +823,7 @@ const WINDOWS_LINK_TYPE = /^(?:symboliclink|junction|hardlink)$/i;
  * checked by the registry guard as a source (LINK_SOURCE): `ln` (a relative
  * symbolic source from the link's dir and from here), `cp -l|-s`, `mount`,
  * `bindfs` (every operand), `install -l`, `rsync --link-dest` (from here and
- * from the destination), and on Windows `mklink` (also as `cmd /c mklink`) and
+ * from the destination), and on Windows `mklink` and
  * `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink` (both paths).
  */
 const linkReach = (
@@ -821,18 +858,7 @@ const linkReach = (
       return [...atAll(dir), ...(dest && !path.isAbsolute(dir) ? atAll(path.join(dest, dir)) : [])];
     });
   }
-  // `cmd /c mklink …` (one quoted word or several).
-  const shell = /^cmd(?:\.exe)?$/.test(verb) ? args.findIndex((arg) => /^\/[ck]$/i.test(arg)) : -1;
-  const inner =
-    shell < 0
-      ? []
-      : args
-          .slice(shell + 1)
-          .flatMap((arg) => arg.split(/\s+/))
-          .filter(Boolean);
-  const mklink =
-    verb === "mklink" ? args : inner[0]?.toLowerCase() === "mklink" ? inner.slice(1) : null;
-  if (mklink) return all(mklink.filter((arg) => !/^\/[dhj]$/i.test(arg)));
+  if (verb === "mklink") return all(args.filter((arg) => !/^\/[dhj]$/i.test(arg)));
   if (
     (verb === "new-item" || verb === "ni") &&
     args.some((arg) => WINDOWS_LINK_TYPE.test(arg.replace(/^-[\w-]+:/, "")))
@@ -1584,6 +1610,11 @@ const segmentTargets = (
             runIn === dir ? vars : unPwd(),
           ),
         );
+    // `cmd /c "cd x && mklink …"`, `pwsh -c "a; b"`: every statement of the script.
+    const windows =
+      strict === "registry" && depth < 4 ? windowsScript(words, segment.stdin?.join("\n")) : null;
+    if (windows !== null && dir !== undefined)
+      targets.push(...segmentTargets(dir, windows, "powershell", depth + 1, strict, vars));
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
     const bare = strict === "registry" && depth < 4 ? unwrapped(words) : null;
     if (bare?.length && dir !== undefined)
@@ -1726,8 +1757,11 @@ const segmentTargets = (
         for (const file of operands(args)) targets.push(...atAll(file));
       // A link reaches its source: a write through it lands there, even one later
       // in this command, before the link exists.
-      for (const source of linkReach(verb, args, at, atAll))
-        targets.push(path.join(source, LINK_SOURCE));
+      // `xargs` or `parallel` fills in the words its stdin feeds it (a heredoc, a here-string, `echo … |`).
+      const feed = fed === undefined && !piped.length ? undefined : [fed, ...piped].join("\n");
+      for (const [linker = "", ...rest] of fedRuns(words, feed))
+        for (const source of linkReach(commandName(linker), rest, at, atAll))
+          targets.push(path.join(source, LINK_SOURCE));
     }
     if (strict && dir !== undefined) {
       const runIn = dir;

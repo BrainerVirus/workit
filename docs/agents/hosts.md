@@ -483,8 +483,12 @@ Issued-registry guard limits (#292):
     exists, when the hook reads it) cannot pass through it: `ln` (hard, `-s`,
     `-f`, `-T`, `--symbolic`), `cp -s|-l|--link|--symbolic-link`, `install -l`,
     `rsync --link-dest` (a relative dir read from the destination), `mount`,
-    `bindfs`, and on Windows `mklink` (`/D`, `/J`, `/H`, also in `cmd /c`) and
-    `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink`. On Windows a
+    `bindfs`, and on Windows `mklink` (`/D`, `/J`, `/H`) and
+    `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink`. A `cmd /c "…"` or
+    `pwsh|powershell -Command "…"` script is read statement by statement (`&&`,
+    `&`, `||`, `|`, `;`), and `xargs` or `parallel` is judged with the words
+    its stdin feeds it filled in (a heredoc, a here-string, a literal `echo`,
+    `printf` or `cat` pipe, or `:::` arguments). On Windows a
     command with unquoted `C:\…` paths is judged a second time with them
     spelled with `/`, since a POSIX shell drops the `\`. A source holds one when it is an ancestor of the state or a config
     dir, a repository's root, git dir or `workit` dir holding a ledger, or an
