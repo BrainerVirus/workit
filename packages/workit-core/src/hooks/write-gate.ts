@@ -129,10 +129,32 @@ const operands = (words: string[]) => words.filter((item) => !item.startsWith("-
 const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 
 /**
+ * Past a wrapper's options, their values and numbers (`-c 0-2`, `5s`) from `at`, and with `#`
+ * in its option letters its one operand (`taskset ff`, `timeout inf`); with `assigns`, past
+ * `NAME=value` words too (`sudo X=1`).
+ */
+const pastOptions = (
+  words: readonly string[],
+  at: number,
+  takes: string,
+  assigns = false,
+): number => {
+  for (let operand = !takes.includes("#"); ; at++) {
+    for (; at < words.length && /^-|^\d[\w.,-]*$|^\w+\+?=/.test(words[at]);) {
+      if (/^\w+\+?=/.test(words[at]) && !assigns) break;
+      operand ||= /^\d/.test(words[at]);
+      at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
+    }
+    if (operand || at >= words.length) return at;
+    operand = true;
+  }
+};
+
+/**
  * The command past leading assignments, PREFIXES (up to an `xargs`) and
  * wrappers (`timeout 5`, `nice -n 5`, `setsid`, `stdbuf -o0`, `ionice -c3`,
- * `flock <file>`, `!`), with `env`'s options: `-u NAME` and `-C DIR` take a
- * value (also in a cluster, `-iu NAME`), and `-S '<line>'`, `-iS'<line>'` or
+ * `chrt -f 1`, `taskset -c 0-2`, `npx`, `!`), with `env`'s options: `-u NAME` and `-C DIR`
+ * take a value (also in a cluster, `-iu NAME`), and `-S '<line>'`, `-iS'<line>'` or
  * `--split-string[=]<line>` split the line into the command.
  */
 const pastLead = (input: readonly string[]): string[] => {
@@ -149,16 +171,9 @@ const pastLead = (input: readonly string[]): string[] => {
       ];
     else if (env && word.startsWith("-"))
       words = words.slice(/^-[^-]*[uC]$|^--(?:unset|chdir)$/.test(word) ? 2 : 1);
-    else if (name === "flock") {
-      // `flock [options] <file> <command…>`, or `flock [options] <file> -c '<command>'`.
-      while (words[at]?.startsWith("-")) at += /^-[wE]$/.test(words[at]) ? 2 : 1;
-      const rest = words.slice(at + 1);
-      words = /^(?:-c|--command)$/.test(rest[0] ?? "") ? ["sh", "-c", rest[1] ?? ""] : rest;
-    } else if (name !== "env" && WRAPPERS[name] !== undefined) {
-      while (at < words.length && /^-|^\d[\w.]*$/.test(words[at]))
-        at += words[at].length === 2 && WRAPPERS[name].includes(words[at][1]) ? 2 : 1;
-      words = words.slice(at);
-    } else if (PREFIXES.has(word) || /^\w+\+?=/.test(word)) words = words.slice(1);
+    else if (name !== "env" && WRAPPERS[name] !== undefined)
+      words = words.slice(pastOptions(words, at, WRAPPERS[name]));
+    else if (PREFIXES.has(word) || /^\w+\+?=/.test(word)) words = words.slice(1);
     else break;
     env = name === "env" || (env && word.startsWith("-"));
   }
@@ -254,14 +269,19 @@ const editsOf = (input: string[]): string[] | null => {
   }
 };
 
-/** Wrappers that run their operand as the command, with the option letters that take a value. */
+/**
+ * Wrappers that run their operand as the command, with the option letters that take a value
+ * (`#`: one operand comes before the command).
+ */
 const WRAPPERS: Record<string, string> = {
   sudo: "ugCDhpRrTtU",
   doas: "uC",
   env: "uCS",
   nice: "n",
   ionice: "cnp",
-  timeout: "sk",
+  timeout: "#sk",
+  chrt: "#TPD",
+  taskset: "#",
   stdbuf: "ioe",
   time: "fo",
   nohup: "",
@@ -673,11 +693,8 @@ const unwrapped = (words: readonly string[]): string[] | null => {
   for (
     let takes: string | undefined;
     (takes = WRAPPERS[words[at]?.split(/[\\/]/).at(-1) ?? ""]) !== undefined;
-  ) {
-    at++;
-    while (at < words.length && /^-|^\w+\+?=|^\d[\w.]*$/.test(words[at]))
-      at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
-  }
+  )
+    at = pastOptions(words, at + 1, takes, true);
   return at ? words.slice(at) : null;
 };
 
@@ -730,6 +747,8 @@ const opaqueWrites = (
   }
   const [verb, ...args] = words;
   const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  // Wrappers whose command Workit does not follow (a lock file first, a remote host, a typescript).
+  if (/^(?:flock|watch|ssh|parallel|script|su|runuser|strace)$/.test(name)) return ["."];
   const files = operands(args);
   const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
   const listed = (named: string[]) => (named.length ? named : ["."]);
@@ -1947,7 +1966,7 @@ const segmentTargets = (
     if (windows !== null && dir !== undefined)
       targets.push(...segmentTargets(dir, windows, "powershell", depth + 1, strict, vars));
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
-    const bare = strict === "registry" && depth < 4 ? unwrapped(words) : null;
+    const bare = strict && depth < 4 ? unwrapped(words) : null;
     if (bare?.length && dir !== undefined)
       targets.push(
         ...segmentTargets(

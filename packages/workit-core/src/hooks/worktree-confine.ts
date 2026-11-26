@@ -520,7 +520,7 @@ const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php)$/;
 const FED = /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$|^<\(/;
 /** Words before the command they run (`env -i`, `sudo -u me`, `builtin`, `then`). */
 const LEADS =
-  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|timeout|stdbuf|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+\+?=.*|[-\d].*)$/s;
+  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|ionice|chrt|taskset|setsid|timeout|stdbuf|npx|bunx|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+\+?=.*|[-\d].*)$/s;
 /** Commands a judge's refusal reads (a lead's option value is never one of them). */
 const RUNS =
   /^(?:sh|bash|zsh|dash|ksh|mksh|ash|python[\d.]*|node|bun|deno|ruby|perl|php|eval|source|\.|workit)$/;

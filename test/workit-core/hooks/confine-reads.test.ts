@@ -672,3 +672,43 @@ test("Given every module in Python's sys.stdlib_module_names and Node's builtinM
   expect(refused).toBeGreaterThan(names.length - python.size - 1);
   expect(refusedNode).toBe(builtins.filter((name) => !node.has(name)).length);
 });
+
+// Round 3, group 3: a transparent wrapper's command is read past its options and its one operand
+// (a judge's too); an opaque one (a lock file first, a remote host, a recording) is a writer where
+// it runs.
+test("Given a transparent or an opaque wrapper, When a judge or an implementer outside its worktree runs a write through it, Then it is denied; a read through a transparent one runs", () => {
+  const writers = [
+    "chrt -f 1 rm -rf src",
+    "taskset 0x3 rm -rf src",
+    "taskset ff rm -rf src",
+    "taskset -c 0-2 rm -rf src",
+    "timeout --signal KILL 5 rm -rf src",
+    "timeout inf rm -rf src",
+    "setsid -f rm -rf src",
+    "timeout 5 eval 'rm -rf src'",
+    "nice -n 5 bash -c 'rm -rf src'",
+    "sudo -u me bash -c 'rm -rf src'",
+    "flock --timeout 5 /tmp/l rm -rf src",
+    "flock 9",
+    "watch -n1 ls",
+    "ssh host ls",
+    "parallel rm ::: src",
+    "script -q out.txt",
+    "su -c 'rm -rf src'",
+    "runuser -u x -- ls",
+    "strace -o out.txt ls",
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  const reads = ["taskset -c 0 ls src", "chrt -f 1 ls", "nice -n 5 ls src", "timeout 5s ls src"];
+  allowed(verifier, reads);
+  allowed(
+    implementer,
+    reads.map((command) => `cd ${lead} && ${command}`),
+  );
+  allowed(implementer, ["flock /tmp/l touch x", "ssh host ls"]);
+});
