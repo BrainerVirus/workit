@@ -598,3 +598,63 @@ test("Given an issued id and no host, When the author records --self, Then it re
   expect(own.code, own.stdout).toBe(0);
   expect(own.json().data.gate).toMatchObject({ accepted: false, reasons: ["self"] });
 });
+
+test("Given an issued id and no host, When the global --session names it with its own token (--token= or WORKIT_SESSION_TOKEN), Then the verdict records bound and merges (#975)", async () => {
+  for (const [id, viaEnv] of [
+    ["lead-H:rev-3", false],
+    ["lead-H:rev-2", true],
+  ] as const) {
+    const { repo } = setup();
+    const token = recordIssuedSession(repo.cwd, "lead-H", id) ?? "";
+    expect(token).not.toBe("");
+    const recorded = await run(
+      [
+        "--session",
+        id,
+        "ledger",
+        "verdict",
+        "verified",
+        "--how",
+        "drove it",
+        ...(viaEnv ? [] : [`--token=${token}`]),
+      ],
+      repo.cwd,
+      { ...NO_HOST, ...(viaEnv ? { WORKIT_SESSION_TOKEN: token } : {}) },
+    );
+    expect(recorded.code, recorded.stdout).toBe(0);
+    expect(recorded.stdout).toContain("gate: feature/x accepted");
+    expect(rows(repo.cwd, "verdict")[0]).toMatchObject({ sessionBound: true });
+    const merged = await run(["pr", "merge", "--json"], repo.cwd, NO_HOST);
+    expect(merged.code, merged.stdout).toBe(0);
+  }
+});
+
+test("Given an issued id, When a read names it by the global --session without its token, Then it is refused like any other verb and the unblock says a read needs no --session (#975)", async () => {
+  const { repo } = setup();
+  recordIssuedSession(repo.cwd, "lead-H", "lead-H:rev-1");
+  const read = await run(
+    ["--session", "lead-H:rev-1", "ledger", "list", "--json"],
+    repo.cwd,
+    NO_HOST,
+  );
+  expect(read.code, read.stdout).toBe(3);
+  expect(read.json().error).toContain("unbound_session");
+  expect(read.json().unblock).toContain("needs no --session");
+  expect((await run(["ledger", "list", "--json"], repo.cwd, NO_HOST)).code).toBe(0);
+});
+
+for (const [label, env] of [
+  ["a Cyrillic lookalike", { WORKIT_SESSION_ID: "lead-H:\u0430gent-1" }],
+  ["a space", { WORKIT_SESSION_ID: "lead-H:agent 1" }],
+] as const)
+  test(`Given a WORKIT_SESSION_ID with ${label}, When a verdict is recorded, Then it is refused by the --session grammar and nothing is written (#975)`, async () => {
+    const { repo } = setup();
+    const recorded = await run(
+      ["ledger", "verdict", "verified", "--how", "x", "--json"],
+      repo.cwd,
+      env,
+    );
+    expect(recorded.code, recorded.stdout).toBe(2);
+    expect(recorded.json().error).toContain("ASCII");
+    expect(rows(repo.cwd, "verdict")).toEqual([]);
+  });

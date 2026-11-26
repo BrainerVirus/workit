@@ -11,11 +11,14 @@ import {
   appendHookObserved,
   appendLine,
   appendObserved,
+  readLedger,
+  recordVerdict,
   sealed,
   type LedgerResult,
   type ReadRow,
 } from "@/packages/workit-core/src/ledger";
 import { gateStands, setStorePath, SET_TTL_MS } from "@/packages/workit-core/src/core/verdict-set";
+import { recordIssuedSession } from "@/packages/workit-core/src/host-session";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "./hook-fixtures";
 
@@ -240,4 +243,78 @@ test("G a pr.gate row, W read with no expires, T a set cover stops at SET_TTL_MS
   expect(gateStands(root, row("set"), [], start + SET_TTL_MS - 1)).toBe(true);
   expect(gateStands(root, row("set"), [], start + SET_TTL_MS)).toBe(false);
   expect(gateStands(root, row("stack"), [], start + 10 * SET_TTL_MS)).toBe(true);
+});
+
+test("G a pr.gate row citing a verdict recorded under an issued id without its token, W the session stops, T the gate row no longer silences the hook; a bound one still does (#975)", () => {
+  const root = delivered({}, RISKY);
+  workspace();
+  const head = git(root, "rev-parse", "HEAD");
+  const forget = () =>
+    rmSync(path.join(root, ".git", "workit", "hooks"), { recursive: true, force: true });
+  recordIssuedSession(root, "lead-H", "lead-H:rev-1");
+  const verdict = (bound: boolean) =>
+    value(
+      recordVerdict(
+        {
+          cwd: root,
+          actor: actor("lead-H:rev-1", "cli"),
+          sessionSource: "flag",
+          branch: "feature/x",
+          ...(bound ? { sessionBound: true } : {}),
+        },
+        { result: "verified", how: "host variables cleared" },
+      ),
+    );
+  // Written while the forged verdict was accepted (an older CLI).
+  const forged = verdict(false);
+  gateRow(root, head, { via: "own", verdictId: forged.id });
+  const rows = (): readonly ReadRow[] => value(readLedger(root, { integrity: true })).rows;
+  expect(gateStands(root, rows().at(-1) as ReadRow, rows())).toBe(false);
+  forget();
+  expect(claudeStop(root).decision).toBe("block");
+  // The same gate citing a verdict that presented its token stands.
+  const bound = verdict(true);
+  gateRow(root, head, { via: "own", verdictId: bound.id });
+  expect(gateStands(root, rows().at(-1) as ReadRow, rows())).toBe(true);
+});
+
+test("G a set pr.gate whose store row was recorded under an issued id without its token, W gateStands reads it, T it does not stand (#975)", () => {
+  const root = tempRoot("workit-gate-stands-");
+  roots.push(root);
+  recordIssuedSession(root, "lead-H", "lead-H:rev-2");
+  mkdirSync(path.dirname(setStorePath()), { recursive: true });
+  const storeRow = (id: string, bound: boolean) =>
+    value(
+      appendLine(
+        setStorePath(),
+        (previous) => ({
+          ok: true,
+          value: sealed(
+            {
+              type: "verdict.set",
+              set: "s",
+              result: "verified",
+              sessionSource: "flag",
+              ...(bound ? { sessionBound: true } : {}),
+              actor: actor("lead-H:rev-2", "cli"),
+            },
+            id,
+            new Date().toISOString(),
+            previous,
+          ).line,
+        }),
+        {},
+      ),
+    );
+  storeRow("set-forged", false);
+  storeRow("set-bound", true);
+  const gate = (verdictId: string) =>
+    ({
+      type: "pr.gate",
+      at: new Date().toISOString(),
+      verdictId,
+      via: "set",
+    }) as unknown as ReadRow;
+  expect(gateStands(root, gate("set-forged"), [])).toBe(false);
+  expect(gateStands(root, gate("set-bound"), [])).toBe(true);
 });

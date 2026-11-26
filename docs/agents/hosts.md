@@ -246,6 +246,11 @@ is recorded, `sessionClaimRefusal` checks the claimed session (env,
   `<lead>:<it>`) is a no-op, accepted and read as the shell's session (#427);
   a declared session (Claude Code) is still refused as `session_flag`.
 
+The global `workit --session <id>` runs the same check before any verb, with
+the verb's `--token` or `WORKIT_SESSION_TOKEN`; a read verb is not exempt (it
+needs no `--session`). A `WORKIT_SESSION_ID` a ledger write acts as meets the
+`--session` grammar (ASCII `[A-Za-z0-9_.:@/+-]`, 1-128), so a lookalike id is refused.
+
 `workit git commit` runs the same check on its acting session and refuses an
 issued id (`judge_session`). The gate (`ledger.ts` `sessionTrust`) re-checks
 recorded rows: `unissued_session`, and `unbound_session` for a token-backed id

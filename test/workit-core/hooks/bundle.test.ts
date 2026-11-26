@@ -174,7 +174,11 @@ const HOOK_ENTRIES = [
 // past `--`, env.exe, the shared wrapper table, busybox, env behind unknown commands, su -c) take
 // core run from 568,160 B to 573,651 B (+5,491 B; Claude Code 567,008 B, Codex 555,329 B, Cursor
 // 554,723 B). The ceiling is core run plus 2 KiB.
-const BUDGET = 575_699;
+// issued-token (#975, 2026-11-26, Bun 1.4.5, rebased on 10289bc7): the issued registry checked on
+// every host and the Stop hook's gateStands re-checking the cited verdict's trust take core run
+// from 573,651 B to 573,983 B (+332 B; Claude Code 567,340 B, Codex 555,661 B, Cursor 555,055 B).
+// The ceiling is core run plus 2 KiB.
+const BUDGET = 576_031;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

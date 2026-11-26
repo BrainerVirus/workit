@@ -263,6 +263,12 @@ const actorFor = (io: Io, values: Values): Acting | Error => {
   const actor = actorFromEnv(io.env);
   if (values.session !== undefined && values.as !== undefined)
     return new Error("pass --session or --as, not both");
+  // The environment's id meets the --session grammar too: a lookalike
+  // (`lead:аgent` with a Cyrillic а) never records as another id (#975).
+  if (values.session === undefined && actor.session !== null && !SESSION_SAFE.test(actor.session))
+    return new Error(
+      "WORKIT_SESSION_ID must be 1-128 characters of [A-Za-z0-9_.:@/+-] (ASCII, no spaces)",
+    );
   if (values.session !== undefined) {
     if (!SESSION_SAFE.test(values.session))
       return new Error("--session must be 1-128 characters of [A-Za-z0-9_.:@/+-]");

@@ -477,7 +477,9 @@ to them or a dir that holds them.
 set verdict: a void row in the same store, after which it covers no PR in
 any repository (`pr status` notes that it was voided). The Stop hook stops
 trusting the `pr.gate` row `pr status` recorded for a head once the verdict it
-cited is voided or its set cover expires, and asks for a verdict again.
+cited is voided, is one the gate no longer trusts (an issued id recorded
+without its token, a row outside the chain), or its set cover expires, and
+asks for a verdict again.
 
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged
