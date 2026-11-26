@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit changelog apply` and `workit pr create --changelog` now move [Unreleased] entries a release tag already shipped into their release sections before adding the new entry, in the same commit; the output says how many moved.
 - hooks load about 9 KB less: the workspaces.json editor descriptions now live only in the CLI's schema generator
 
+### Added
+
+- a Claude Code or Codex subagent's `workit check` runs now carry its own agent id, so a verifier's verdict is held to its own check runs and a lead's verdict no longer counts its subagents' runs; OpenCode and Pi children are held to the runs their own session made.
+
 ## [2.25.4] - 2026-11-26
 
 ### Fixed
