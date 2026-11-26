@@ -135,6 +135,14 @@ const deniedInLead = (commands: string[]) => {
   );
 };
 
+const allowedInLead = (commands: string[]) => {
+  allowed(verifier, commands);
+  allowed(
+    implementer,
+    commands.map((command) => `cd ${lead} && ${command}`),
+  );
+};
+
 test("Given a pwsh -c script whose command writes or runs code, When a judge or an implementer runs it in the lead's checkout, Then it is denied; in the implementer's worktree it runs", () => {
   const writers = [
     "pwsh -c 'sc f a'",
@@ -351,4 +359,89 @@ test("Given any cmdlet whose verb is outside the read-only verbs, When it runs i
         shellMutationTargets(lead, `pwsh -c "${verb}-${noun} x"`, "posix", true),
         `${verb}-${noun}`,
       ).toEqual([]);
+});
+
+// Verification mwx7wdfd, item 1: a static member reached through a variable or `$_` is still a static call.
+test("Given a static member on a type held in a variable or $_, When a judge or an implementer runs it in the lead's checkout, Then it is denied", () => {
+  deniedInLead([
+    `pwsh -c '$t = [IO.File]; $t::Delete("package.json")'`,
+    `pwsh -c '$t = [type]"System.IO.File"; $t::Delete("package.json")'`,
+    `pwsh -c '[IO.File] | % { $_::Delete("package.json") }'`,
+  ]);
+  denied(pwshVerifier, ["$t = [IO.File]; $t::Delete('package.json')"], "verifier ver-win-ps");
+});
+
+// Item 2: parameters before `-Command` match as PowerShell matches them, with their values.
+test("Given pwsh or powershell parameters before -Command, When one takes a value, is unknown, or loads code, Then the script after it is judged or the command counts as a writer", () => {
+  // Abbreviations PowerShell matches: the value is skipped and the script is read.
+  deniedInLead([
+    "pwsh -ep Bypass -c 'ri package.json'",
+    "pwsh -exe Bypass -c 'ri package.json'",
+    "pwsh -exec Bypass -c 'ri package.json'",
+    "powershell -Version 2 -c 'ri package.json'",
+    "pwsh -of Text -c 'ri package.json'",
+    "pwsh -ou Text -c 'ri package.json'",
+    "pwsh -wo src -c 'ri package.json'",
+    "pwsh -wor src -c 'ri package.json'",
+    "pwsh -wi Hidden -c 'ri package.json'",
+    "pwsh -cu p -c 'ri package.json'",
+  ]);
+  // Unknown or ambiguous, or loading code: a writer even when the script reads.
+  deniedInLead([
+    "pwsh -epo x -c Get-ChildItem",
+    "pwsh -in Text -c Get-ChildItem",
+    "pwsh -v -c Get-ChildItem",
+    "pwsh -ver x -c Get-ChildItem",
+    "pwsh -Config x -c Get-ChildItem",
+    "pwsh -ConfigurationName x -c Get-ChildItem",
+    "pwsh -SettingsFile x -c Get-ChildItem",
+    "powershell -PSConsoleFile x -c Get-ChildItem",
+    "pwsh -Login -c Get-ChildItem",
+  ]);
+  allowedInLead([
+    "pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -c Get-ChildItem",
+    "pwsh -nop -noni -nol -c Get-ChildItem",
+    "pwsh -ep Bypass -wd src -of Text -c Get-ChildItem",
+    "pwsh -Version",
+  ]);
+});
+
+// Item 3: an environment that changes what a later program runs or loads.
+test("Given a PowerShell $env: or a Bash assignment of a name that changes what a program runs, When a judge or an implementer runs a program after it in the lead's checkout, Then it is denied", () => {
+  const pwsh = [
+    `pwsh -c '$env:GIT_PAGER = "sh"; git log'`,
+    `pwsh -c '$env:Path += ";C:/x"; git status'`,
+    `pwsh -c '$env:NODE_OPTIONS = "-r ./x.js"; node -v'`,
+  ];
+  deniedInLead(pwsh);
+  denied(pwshImplementer, [`$env:EDITOR = "x"; git commit`], "implementer impl-win-ps");
+  // A judge's Bash refuses these names already; an implementer's confinement now counts them.
+  denied(
+    implementer,
+    [
+      "PAGER=sh git log",
+      "GIT_SSH_COMMAND=x git fetch",
+      "export EDITOR=x; git status",
+      "env PATH=/x git status",
+      "BASH_ENV=x bash -c true",
+    ].map((command) => `cd ${lead} && ${command}`),
+    IMPLEMENTER,
+  );
+  allowedInLead([`pwsh -c '$env:FOO = 1; git status'`]);
+  allowed(implementer, [
+    `cd ${lead} && FOO=1 git status`,
+    `cd ${lead} && GIT_PAGER=cat git log`,
+    `cd ${lead} && GIT_OPTIONAL_LOCKS=0 git status`,
+  ]);
+});
+
+// Item 4: a command word spelled with a cmd variable may be any program.
+test("Given a command word that is a cmd variable, When a judge or an implementer runs it in the lead's checkout, Then it is denied", () => {
+  deniedInLead([
+    "%COMSPEC% /c del package.json",
+    `cmd /c "%COMSPEC% /c del package.json"`,
+    `cmd /c ""%COMSPEC%" /c del package.json"`,
+    "cmd /v:on /c !X! /c del package.json",
+    `pwsh -c '%COMSPEC% /c del package.json'`,
+  ]);
 });

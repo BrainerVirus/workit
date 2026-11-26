@@ -173,6 +173,17 @@ const READ_METHODS =
 const READ_MEMBERS =
   /^(?:name|fullname|basename|extension|length|count|directory|directoryname|parent|root|exists|mode|lastwritetime(?:utc)?|creationtime(?:utc)?|lastaccesstime(?:utc)?|attributes|linktype|target|pspath|pschildname|path|line|linenumber|filename|matches|value|key|keys|values|id|processname|source|definition|version)$/i;
 
+/**
+ * Environment names that change what a program runs or loads: git's
+ * (`GIT_PAGER`, `GIT_DIR`, `GIT_SSH_COMMAND`…), a pager or editor, the
+ * search path, a dynamic loader's, an interpreter's startup options.
+ */
+export const LOADER_ENV =
+  /^(?:GIT_\w*|PAGER|EDITOR|VISUAL|PATH|LD_\w*|DYLD_\w*|NODE_OPTIONS|PYTHON\w*|BASH_ENV|ENV|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB))$/i;
+
+/** A cmd variable reference: `%X%`, or `!X!` under delayed expansion. */
+export const CMD_VAR = /%[^%\s]+%|![^!\s]+!/;
+
 /** A redirect that writes nothing. */
 const NULL_SINK = /^(?:\$null|nul|\/dev\/null)$/i;
 
@@ -224,8 +235,12 @@ export const powershellTextWriter = (text: string): string | null => {
   const code = pwshCode(text);
   // `&` runs a command, a script or a script block; `&&` chains and `2>&1` merges.
   if (/(?<![&>])&(?![&>])/.test(code)) return "&";
-  const statics = /(\[[^\]]*\])\s*::\s*(\w*)/.exec(code);
+  // A static member on any receiver: a type literal, or a type held in `$t` or `$_`.
+  const statics = /([^\s;|{(]*)\s*::\s*(\w*)/.exec(code);
   if (statics) return `${statics[1]}::${statics[2]}`;
+  // An environment that changes what a later program runs or loads.
+  for (const [, name] of code.matchAll(/\$\{?env:(\w+)\}?\s*[-+]?=/gi))
+    if (LOADER_ENV.test(name)) return `$env:${name} =`;
   for (const [, name] of code.matchAll(/\.([A-Za-z_]\w*)\(/g))
     if (!READ_METHODS.test(name)) return `.${name}()`;
   const member = /\.([A-Za-z_]\w*)\s*[-+*/%]?=/.exec(code);
@@ -290,6 +305,8 @@ const pwshStatementWriter = (
   const first = words[0];
   if (first === undefined) return null;
   if (first === ".") return ". (dot-source)";
+  // `%COMSPEC% /c …`: a command named by a variable.
+  if (CMD_VAR.test(first)) return first;
   // A variable, an array, a cast, a number, a string, a parameter after a group, a member.
   if (/^[$@(['"\d-]/.test(first) || /^\.[A-Za-z_]/.test(first)) return null;
   // A path (`./x.ps1`, `C:\x.exe`, `function:f`) or a file name (`x.bat`, `git.exe`).

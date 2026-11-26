@@ -154,10 +154,11 @@ const HOOK_ENTRIES = [
 // #880 Windows read allowlists (2026-11-26, Bun 1.4.5, on 5f8e4826): a PowerShell or cmd statement
 // passes only as a known read (windows-reads.ts: the alias table, the read verbs and cmdlets, the
 // text checks), and glued encoded commands, stdin scripts, `xargs -J` and `find -exec {}` count as
-// writers; with raw-git reading BSD `xargs -J`/`-R`, core run 567,412 B -> 574,830 B (+7,418 B;
-// Claude Code 568,182 B, Codex 556,505 B, Cursor 555,899 B). The ceiling is core run plus 2 KiB;
-// whichever of this and #966 merges second reconciles it.
-const BUDGET = 576_878;
+// writers; with raw-git reading BSD `xargs -J`/`-R`, the pwsh parameter table, static members on
+// any receiver, loader environments and cmd-variable command words, core run 567,412 B ->
+// 576,814 B (+9,402 B; Claude Code 570,170 B, Codex 558,493 B, Cursor 557,887 B). The ceiling is
+// core run plus 2 KiB; whichever of this and #966 merges second reconciles it.
+const BUDGET = 578_862;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

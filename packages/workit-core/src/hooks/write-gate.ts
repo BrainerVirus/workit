@@ -46,7 +46,7 @@ import {
   type RawInvocation,
 } from "./raw-git";
 import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
-import { powershellTextWriter, windowsStatementWriter } from "./windows-reads";
+import { CMD_VAR, LOADER_ENV, powershellTextWriter, windowsStatementWriter } from "./windows-reads";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -746,9 +746,6 @@ const shellScript = (words: readonly string[]): string | null => {
   return null;
 };
 
-/** A cmd variable reference: `%X%`, or `!X!` under delayed expansion. */
-const CMD_VAR = /%[^%\s]+%|![^!\s]+!/;
-
 /** xargs options that take the next word as their value (`-J` and `-R` are BSD's). */
 const XARGS_VALUE = /^-[InLPdsEaJR]$/;
 
@@ -808,6 +805,8 @@ const opaqueWrites = (
     ((name === "pwsh" || name === "powershell") && powershellOpaque(words))
   )
     return ["."];
+  // `%COMSPEC% /c …`: a command named by a cmd variable.
+  if (CMD_VAR.test(verb ?? "")) return ["."];
   // `set X=…&& mklink /J %X% …`: a link whose name or target is a cmd variable.
   if (name === "mklink" && args.some((arg) => CMD_VAR.test(arg))) return ["."];
   // `cmd` with no `/c` or `/k` runs the script on its stdin (`echo del x | cmd`).
@@ -1601,6 +1600,27 @@ const commandWords = (words: readonly string[]): string[] => {
   return words.slice(start);
 };
 
+/** LOADER_ENV as the shell spells it: names are case-sensitive. */
+const POSIX_LOADER = new RegExp(LOADER_ENV.source);
+
+/**
+ * The word before a command (an assignment, or one `export`, `env` or
+ * another declarer and their options take) that sets a name changing what a
+ * program runs (`PAGER=sh`, `GIT_SSH_COMMAND=…`, `PATH=…`), else undefined;
+ * `PAGER=cat`, `GIT_PAGER=cat` and `GIT_OPTIONAL_LOCKS=0` run nothing.
+ */
+const loaderAssignment = (words: readonly string[]): string | undefined => {
+  for (const word of words) {
+    const name = /^(\w+)\+?=/.exec(word)?.[1];
+    // The values a judge's git may take (worktree-confine.ts judgeGit): no program, no lock.
+    if (/^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0)$/.test(word)) continue;
+    if (name !== undefined) {
+      if (POSIX_LOADER.test(name)) return word.split("=")[0];
+    } else if (!DECLARERS.has(word) && word !== "env" && !word.startsWith("-")) return undefined;
+  }
+  return undefined;
+};
+
 /** Commands that can set any variable, whatever their arguments name: no variable is trusted after one. */
 const REBINDS_ANY = new Set([
   "source",
@@ -1869,6 +1889,9 @@ const segmentTargets = (
   // Confined, a PowerShell or `cmd /c` statement passes only as a known read (windows-reads.ts).
   const windowsReads = strict === true && dialect === "powershell";
   const textWriter = windowsReads && !inCmd ? powershellTextWriter(command) : null;
+  // Set by `PAGER=… git log` or `export GIT_SSH_COMMAND=…`: every command from there runs a program
+  // the environment may change, so each counts as a writer in its directory.
+  let loader: string | undefined;
   // Scripts this command writes from a heredoc (`cat > t.sh <<'EOF'`), by path.
   const written = new Map<string, string>();
   let dir: string | undefined = cwd;
@@ -1976,6 +1999,10 @@ const segmentTargets = (
         : null;
     if (unreadable !== null && dir !== undefined)
       targets.push(placeholderIn(dir, `${OPAQUE_TARGET}${encodeURIComponent(unreadable)}`));
+    if (strict === true && dialect === "posix")
+      loader ??= loaderAssignment(commandWords(segment.words));
+    if (loader !== undefined && dir !== undefined && segment.words.length > 0)
+      targets.push(placeholderIn(dir, `${OPAQUE_TARGET}${encodeURIComponent(loader)}`));
     const body = commandWords(segment.words);
     // The segment whose output this one reads (`a | b`).
     const before = segments[segments.indexOf(segment) - 1];
