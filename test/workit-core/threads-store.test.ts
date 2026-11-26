@@ -20,7 +20,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { readProc, upsertProc } from "@/packages/workit-core/src/store/threads/procs";
+import type { SqlDb } from "@/packages/workit-core/src/store/threads/sqlite";
 import {
+  beginWrite,
   openThreadsStore,
   ThreadsBusyError,
   ThreadsSchemaError,
@@ -76,6 +78,25 @@ if (mode === "open" || mode === "open-as") {
         ? { rss: row.rss + 1 }
         : { cwd: "/w", cmd: "vite", kind: "server", startedAt: "2026-11-13T00:00:00Z", rss: 1 },
     );
+  store.close();
+} else if (mode === "chain") {
+  // Back-to-back short transactions, each holding the lock for a slow commit's
+  // time, for longer than the other writer's busy timeout.
+  const [forMs] = args;
+  const store = openThreadsStore({ env });
+  let until = 0;
+  while (until === 0 || Date.now() < until) {
+    upsertProc(store, "chained", (row) => {
+      Atomics.wait(pause, 0, 0, 20);
+      return row
+        ? { rss: row.rss + 1 }
+        : { cwd: "/w", cmd: "vite", kind: "server", startedAt: "2026-11-13T00:00:00Z", rss: 1 };
+    });
+    if (until === 0) {
+      until = Date.now() + Number(forMs);
+      signal("chaining");
+    }
+  }
   store.close();
 } else if (mode === "hold") {
   const store = openThreadsStore({ env });
@@ -253,6 +274,85 @@ test.each([
     } finally {
       store.close();
     }
+  },
+);
+
+test.each(["bun", "node"] as const)(
+  "Given a %s process committing short transactions back to back for longer than the busy timeout, When another writer waits, Then it writes once the burst ends",
+  async (runtime) => {
+    const state = tempDir("wk-threads-chain-");
+    const env = { WORKIT_STATE_DIR: state };
+    openThreadsStore({ env }).close();
+    const chain = worker(runtime, "chain", state, "1500");
+    await waitForFile(path.join(state, "chaining"), chain);
+
+    // Before the fix this writer starved in SQLite's busy handler and threw
+    // after 300 ms, though no transaction held the lock for over 20 ms.
+    const store = openThreadsStore({ env, busyTimeoutMs: 300 });
+    try {
+      upsertProc(store, "mine", () => ({
+        cwd: "/w",
+        cmd: "next dev",
+        kind: "server",
+        startedAt: "2026-11-13T00:00:01Z",
+      }));
+      expect(await chain).toMatchObject({ code: 0, stderr: "" });
+      expect(readProc(store, "mine")?.cmd).toBe("next dev");
+      expect(readProc(store, "chained")?.rss).toBeGreaterThan(1);
+    } finally {
+      store.close();
+    }
+  },
+);
+
+/** A connection whose BEGIN IMMEDIATE answers SQLITE_BUSY at once, without a busy handler. */
+const busyAtOnce = (committing: boolean) => {
+  let version = 0;
+  let attempts = 0;
+  const db: SqlDb = {
+    exec: (sql) => {
+      if (sql !== "BEGIN IMMEDIATE") return;
+      attempts++;
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    },
+    // Another writer committing between every attempt, or none at all.
+    get: () => ({ data_version: committing ? ++version : version }),
+    run: () => 0,
+    all: () => [],
+    close: () => {},
+  };
+  return { db, attempts: () => attempts };
+};
+
+test.each([
+  // Gives up once 100 ms pass with no commit.
+  ["no other writer commits", false, 100, [5, 10, 20, 40, 50]],
+  // Gives up at 12 busy timeouts (240 ms) though commits keep arriving.
+  ["other writers keep committing", true, 20, [5, 10, 20, 40, 50, 50, 50, 50]],
+] as const)(
+  "Given SQLite answering busy at once and %s, When a writer waits, Then it backs off 5 ms doubling to 50 and gives up in bounded time",
+  (_, committing, waitMs, expected) => {
+    const { db, attempts } = busyAtOnce(committing);
+    const pauses: number[] = [];
+    // A clock that moves only when the writer sleeps: a spin would never end.
+    let now = 0;
+    const clock = {
+      now: () => now,
+      sleep: (ms: number) => {
+        pauses.push(ms);
+        now += ms;
+      },
+    };
+    let failure: unknown;
+    try {
+      beginWrite(db, "/x/threads.db", waitMs, clock);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ThreadsBusyError);
+    // Every failed attempt but the last sleeps: no spinning.
+    expect(pauses).toEqual([...expected]);
+    expect(attempts()).toBe(expected.length + 1);
   },
 );
 

@@ -187,13 +187,75 @@ const schemaVersion = (db: SqlDb): number => {
   return row ? Number(row.value) : 0;
 };
 
-const transaction = <T>(db: SqlDb, file: string, waitMs: number, body: () => T): T => {
+/** One wait inside SQLite's busy handler, between checks for another writer's progress. */
+const BUSY_SLICE_MS = 250;
+/** A waiter that sees other writers commit keeps waiting, up to this many busy timeouts in all. */
+const BUSY_PROGRESS_LIMIT = 12;
+
+/** An attempt that fails faster than this did not wait in SQLite's busy handler. */
+const BUSY_FAST_FAIL_MS = 5;
+
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (ms: number): void => {
+  Atomics.wait(pause, 0, 0, ms);
+};
+
+/** Changes whenever another connection commits; undefined when it cannot be read just now. */
+const dataVersion = (db: SqlDb): number | undefined => {
   try {
-    db.exec("BEGIN IMMEDIATE");
+    return Number(db.get("PRAGMA data_version")?.data_version);
   } catch (error) {
-    if (isBusy(error)) throw new ThreadsBusyError(file, waitMs, { cause: error });
+    if (isBusy(error)) return undefined;
     throw error;
   }
+};
+
+/**
+ * Takes the write lock. SQLite's busy handler polls with growing sleeps, so a
+ * waiter almost never lands in the gap between another process's back-to-back
+ * short transactions and starves for that writer's whole burst, though no
+ * single transaction holds the lock long. So the wait is per slice, and the
+ * busy timeout counts from the last commit any other connection made: a
+ * writer that keeps committing is progress, while a lock held with no commit
+ * for the whole timeout (a stuck or long transaction) is ThreadsBusyError.
+ * SQLite can also answer busy at once, without its handler: then the loop
+ * sleeps itself, 5 ms doubling up to 50, and never spins.
+ */
+export const beginWrite = (
+  db: SqlDb,
+  file: string,
+  waitMs: number,
+  clock: { now: () => number; sleep: (ms: number) => void } = { now: Date.now, sleep },
+): void => {
+  const start = clock.now();
+  let quietSince = start;
+  let seen = dataVersion(db);
+  let backoff = 0;
+  for (;;) {
+    const attempt = clock.now();
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      return;
+    } catch (error) {
+      if (!isBusy(error)) throw error;
+      const now = clock.now();
+      const version = dataVersion(db);
+      if (version !== undefined && version !== seen) {
+        seen = version;
+        quietSince = now;
+      }
+      if (now - quietSince >= waitMs || now - start >= waitMs * BUSY_PROGRESS_LIMIT)
+        throw new ThreadsBusyError(file, waitMs, { cause: error });
+      if (now - attempt < BUSY_FAST_FAIL_MS) {
+        backoff = Math.min(backoff === 0 ? 5 : backoff * 2, 50);
+        clock.sleep(backoff);
+      } else backoff = 0;
+    }
+  }
+};
+
+const transaction = <T>(db: SqlDb, file: string, waitMs: number, body: () => T): T => {
+  beginWrite(db, file, waitMs);
   try {
     const result = body();
     db.exec("COMMIT");
@@ -221,11 +283,6 @@ const migrate = (db: SqlDb, file: string, waitMs: number): void =>
       { version: String(SCHEMA_VERSION) },
     );
   });
-
-const pause = new Int32Array(new SharedArrayBuffer(4));
-const sleep = (ms: number): void => {
-  Atomics.wait(pause, 0, 0, ms);
-};
 
 /**
  * Brings an open file to WAL at SCHEMA_VERSION, refusing a newer schema
@@ -273,7 +330,7 @@ export const openThreadsStore = (options: OpenOptions = {}): ThreadsStore => {
   checkStoreFiles(file);
   const db = openSqlite(file);
   try {
-    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.trunc(waitMs))}`);
+    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.min(Math.trunc(waitMs), BUSY_SLICE_MS))}`);
     settle(db, file, waitMs);
   } catch (error) {
     db.close();

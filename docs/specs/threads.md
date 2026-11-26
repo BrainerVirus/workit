@@ -28,9 +28,14 @@ through one adapter on both runtimes Workit runs on.
   decides which processes the registry signals. Windows skips the owner and
   mode checks (no POSIX uid or mode; the ACL is inherited).
 - Journal mode WAL: readers never block the writer, and one writer at a time.
-- `busy_timeout` 5000 ms on every connection: a writer that finds the write
-  lock held waits and retries for that long, then fails with a clear
-  "busy" error naming the file. Callers may pass a shorter wait.
+- A 5000 ms busy timeout: a writer that finds the write lock held waits and
+  retries, and fails with a clear "busy" error naming the file once no other
+  connection has committed for that long. Callers may pass a shorter wait.
+  SQLite's own busy handler polls with growing sleeps and almost never lands
+  in the gap between another process's back-to-back transactions, so it
+  waits in 250 ms slices (`busy_timeout`) and restarts the clock whenever
+  `PRAGMA data_version` shows another commit: a busy writer is progress, a
+  lock held with no commit is not. The whole wait stays under 12 timeouts.
 - Switching a fresh file to WAL needs every other connection gone, and SQLite
   answers "database is locked" at once (no busy handler) while another process
   has it open, so two processes opening a fresh file together would lose one.
