@@ -30,6 +30,10 @@ beforeAll(() => {
   home = useConfigHome("workit-verdict-guard-home-");
   mkdirSync(path.join(state, "verdicts", "sets"), { recursive: true });
   mkdirSync(ledger, { recursive: true });
+  // A git dir the store resolves from its files: each hook dispatch spawns no `git rev-parse`
+  // (one per case took this test past its timeout on Windows CI).
+  mkdirSync(path.join(root, ".git", "objects"), { recursive: true });
+  writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
   mkdirSync(path.join(state, "folders", "app-1a2b", "ledger"), { recursive: true });
   mkdirSync(path.join(state, "issued"), { recursive: true });
   mkdirSync(path.join(state, "approvals"), { recursive: true });
