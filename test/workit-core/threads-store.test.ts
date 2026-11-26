@@ -81,23 +81,38 @@ if (mode === "open" || mode === "open-as") {
   store.close();
 } else if (mode === "chain") {
   // Back-to-back short transactions, each holding the lock for a slow commit's
-  // time, for longer than the other writer's busy timeout.
-  const [forMs] = args;
+  // time, for several of the other writer's busy timeouts. No flush per
+  // commit: one slow flush (Windows CI's disk) holds the lock past the
+  // timeout for real, and is not what this test is about.
   const store = openThreadsStore({ env });
-  let until = 0;
-  while (until === 0 || Date.now() < until) {
+  store.db.exec("PRAGMA synchronous = OFF");
+  const commit = () =>
     upsertProc(store, "chained", (row) => {
       Atomics.wait(pause, 0, 0, 20);
       return row
         ? { rss: row.rss + 1 }
         : { cwd: "/w", cmd: "vite", kind: "server", startedAt: "2026-11-13T00:00:00Z", rss: 1 };
     });
-    if (until === 0) {
-      until = Date.now() + Number(forMs);
-      signal("chaining");
-    }
+  // The busy timeout is sized from this runner's slowest warm-up commit.
+  let slowest = 0;
+  for (let i = 0; i < 5; i++) {
+    const begun = Date.now();
+    commit();
+    slowest = Math.max(slowest, Date.now() - begun);
+  }
+  const waitMs = Math.max(300, 10 * slowest);
+  const until = Date.now() + 5 * waitMs;
+  fs.writeFileSync(path.join(dir, "chaining.tmp"), String(waitMs));
+  fs.renameSync(path.join(dir, "chaining.tmp"), path.join(dir, "chaining"));
+  let last = Date.now();
+  let maxGapMs = 0;
+  while (Date.now() < until) {
+    commit();
+    maxGapMs = Math.max(maxGapMs, Date.now() - last);
+    last = Date.now();
   }
   store.close();
+  console.log(JSON.stringify({ waitMs, maxGapMs }));
 } else if (mode === "hold") {
   const store = openThreadsStore({ env });
   store.write((db) => {
@@ -283,20 +298,32 @@ test.each(["bun", "node"] as const)(
     const state = tempDir("wk-threads-chain-");
     const env = { WORKIT_STATE_DIR: state };
     openThreadsStore({ env }).close();
-    const chain = worker(runtime, "chain", state, "1500");
+    const chain = worker(runtime, "chain", state);
+    // Written after the worker's warm-up commits: its start-up time is spent.
     await waitForFile(path.join(state, "chaining"), chain);
+    const waitMs = Number(readFileSync(path.join(state, "chaining"), "utf8"));
 
     // Before the fix this writer starved in SQLite's busy handler and threw
-    // after 300 ms, though no transaction held the lock for over 20 ms.
-    const store = openThreadsStore({ env, busyTimeoutMs: 300 });
+    // after waitMs, though no transaction held the lock for over 20 ms.
+    const store = openThreadsStore({ env, busyTimeoutMs: waitMs });
     try {
-      upsertProc(store, "mine", () => ({
-        cwd: "/w",
-        cmd: "next dev",
-        kind: "server",
-        startedAt: "2026-11-13T00:00:01Z",
-      }));
-      expect(await chain).toMatchObject({ code: 0, stderr: "" });
+      try {
+        upsertProc(store, "mine", () => ({
+          cwd: "/w",
+          cmd: "next dev",
+          kind: "server",
+          startedAt: "2026-11-13T00:00:01Z",
+        }));
+      } catch (error) {
+        // A gap between the worker's commits as long as the timeout is a lock
+        // really held that long, not starvation: fail naming it.
+        const { stdout } = await chain;
+        expect(JSON.parse(stdout).maxGapMs).toBeLessThan(waitMs);
+        throw error;
+      }
+      const done = await chain;
+      expect(done).toMatchObject({ code: 0, stderr: "" });
+      expect(JSON.parse(done.stdout).maxGapMs).toBeLessThan(waitMs);
       expect(readProc(store, "mine")?.cmd).toBe("next dev");
       expect(readProc(store, "chained")?.rss).toBeGreaterThan(1);
     } finally {
