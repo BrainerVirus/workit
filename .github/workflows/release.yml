@@ -20,7 +20,7 @@ permissions: {}
 # release adds no commit to main and leaves open PRs up to date. The same goes
 # for CHANGELOG.md: the release moves its entries out of [Unreleased] in this
 # checkout only, and main gets that split from a PR running
-# `bun scripts/roll-changelog.ts`.
+# `workit changelog roll --tag-prefix workit-dev-v`.
 jobs:
   release:
     runs-on: ubuntu-latest

@@ -14,30 +14,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.27.9] - 2026-11-26
+
+### Fixed
+
+- a workit call run with another WORKIT_STATE_DIR, XDG_STATE_HOME or HOME can no longer forge an issued session's bound verdict: the hooks deny such a call on every host, and each checkout reads its issued-session registry from the state dir its host's hooks pinned (#980).
+
+## [2.27.8] - 2026-11-26
+
+### Fixed
+
+- an agent's shell command that runs Workit's own hook entry (any host's launcher, source or bundle, by name or resolved path) or removes or moves .git, .git/workit or a dir holding the ledger is denied on every host
+
+## [2.27.7] - 2026-11-26
+
 ### Fixed
 
 - on every host, a verdict (--self included) or commit is refused as foreign_host_session when two of OPENCODE_SESSION_ID, PI_SESSION_ID and CODEX_THREAD_ID are set, or when one names another host than the shell's own (WORKIT_HOST, Claude Code's marks, Cursor's CURSOR_AGENT), so prefixing OPENCODE_SESSION_ID=nobody-N in a Codex, Pi or Cursor shell no longer records an independent verdict (#986).
+
+## [2.27.6] - 2026-11-26
+
+### Fixed
+
 - in a Claude Code shell, OPENCODE_SESSION_ID, PI_SESSION_ID or CODEX_THREAD_ID no longer let a session record a verdict or commit as an invented nested-host session; the identity guard also denies changing those variables, CLAUDECODE or CLAUDE_CODE_ENTRYPOINT beside a workit call (#981).
-- Removing a worker's scratch directory now retries a busy or racing directory under Bun as well as Node; Bun accepted the rmSync retry options but never retried.
-- `workit changelog apply` writes CHANGELOG.md through a temp file and a rename, keeping its mode, CRLF line endings and symlinks, and the roll before it reads every release tag's changelog in two batched git calls, so `pr create --changelog` no longer pays a git process per tag.
-- under worktree and scratch confinement, a PowerShell statement (a pwsh -c script or the PowerShell tool) or a cmd /c statement now passes only when its command is a known read; writer cmdlets and aliases, .NET static calls, & and dot-source invocation, script paths, stdin scripts, glued -EncodedCommand forms, xargs -J and find -exec {} count as writes in their run directory
-- under a judge's or an implementer's confinement, a pwsh or powershell -File script (and pwsh x.ps1), an -EncodedCommand (-enc, -e), iex or Invoke-Expression inside a -Command script, a cmd /c link or write target spelled with a %VAR% or !VAR! variable, and an xargs or parallel command whose name stdin fills in (xargs -I{} {} f) count as a write in the directory they run in; pwsh -c Get-ChildItem, cmd /c dir and xargs cat still run (#880).
-- the write confinement counts more loader environment names (SSH askpass, cargo and rustc wrappers, JVM and .NET startup options, BUN_OPTIONS, NODE_PATH, npm_config_*, PROMPT_COMMAND, PATHEXT, PSModulePath), reads a pwsh -WorkingDirectory before the script as a cd, and lets a judge run a read after a non-loader env or prefix assignment
-- the identity-variable guard now reads the script in glued short-option clusters such as `script -qc`, `su -lc` and `runuser -lc`, so an identity change inside them is denied.
-- `--body-file -` on Node no longer drops the start of a piped body when the writer is slow to close the pipe
-- a verdict under a hook-issued verifier or reviewer id now needs that id's token even from a shell with its host variables cleared (no WORKIT_HOST, WORKIT_HOST=cli, or a host named without its session); the merge gate also refuses such rows already recorded (unbound_session).
+
+## [2.27.5] - 2026-11-26
+
+### Fixed
+
 - on Claude Code and Codex a verdict is held only to check runs whose agent id a claimed hook stamp named, so an agent id set from the shell no longer binds or clears a verdict; a run no stamp named prints that it is bound to no agent and the plain workit check call to rerun.
-- an agent's shell command that runs Workit's own hook entry (any host's launcher, source or bundle, by name or resolved path) or removes or moves .git, .git/workit or a dir holding the ledger is denied on every host
-- a workit call run with another WORKIT_STATE_DIR, XDG_STATE_HOME or HOME can no longer forge an issued session's bound verdict: the hooks deny such a call on every host, and each checkout reads its issued-session registry from the state dir its host's hooks pinned (#980).
 
-### Changed
+## [2.27.4] - 2026-11-26
 
-- `workit changelog apply` and `workit pr create --changelog` now move [Unreleased] entries a release tag already shipped into their release sections before adding the new entry, in the same commit; the output says how many moved.
-- hooks load about 9 KB less: the workspaces.json editor descriptions now live only in the CLI's schema generator
+### Fixed
+
+- a verdict under a hook-issued verifier or reviewer id now needs that id's token even from a shell with its host variables cleared (no WORKIT_HOST, WORKIT_HOST=cli, or a host named without its session); the merge gate also refuses such rows already recorded (unbound_session).
+
+## [2.27.3] - 2026-11-26
+
+### Fixed
+
+- `--body-file -` on Node no longer drops the start of a piped body when the writer is slow to close the pipe
+
+## [2.27.2] - 2026-11-26
+
+### Fixed
+
+- the identity-variable guard now reads the script in glued short-option clusters such as `script -qc`, `su -lc` and `runuser -lc`, so an identity change inside them is denied.
+
+## [2.27.1] - 2026-11-26
+
+### Fixed
+
+- Removing a worker's scratch directory now retries a busy or racing directory under Bun as well as Node; Bun accepted the rmSync retry options but never retried.
+
+## [2.27.0] - 2026-11-26
 
 ### Added
 
 - a Claude Code or Codex subagent's `workit check` runs now carry its own agent id, so a verifier's verdict is held to its own check runs and a lead's verdict no longer counts its subagents' runs; OpenCode and Pi children are held to the runs their own session made. On Claude Code and Codex the hook also refuses a command that changes Workit's identity variables: a guard against careless changes, not a sandbox.
+
+## [2.26.2] - 2026-11-26
+
+### Fixed
+
+- the write confinement counts more loader environment names (SSH askpass, cargo and rustc wrappers, JVM and .NET startup options, BUN_OPTIONS, NODE_PATH, npm_config_*, PROMPT_COMMAND, PATHEXT, PSModulePath), reads a pwsh -WorkingDirectory before the script as a cd, and lets a judge run a read after a non-loader env or prefix assignment
+
+### Changed
+
+- hooks load about 9 KB less: the workspaces.json editor descriptions now live only in the CLI's schema generator
+
+## [2.26.1] - 2026-11-26
+
+### Fixed
+
+- `workit changelog apply` writes CHANGELOG.md through a temp file and a rename, keeping its mode, CRLF line endings and symlinks, and the roll before it reads every release tag's changelog in two batched git calls, so `pr create --changelog` no longer pays a git process per tag.
+
+## [2.26.0] - 2026-11-26
+
+### Changed
+
+- `workit changelog apply` and `workit pr create --changelog` now move [Unreleased] entries a release tag already shipped into their release sections before adding the new entry, in the same commit; the output says how many moved.
+
+## [2.25.6] - 2026-11-26
+
+### Fixed
+
+- under worktree and scratch confinement, a PowerShell statement (a pwsh -c script or the PowerShell tool) or a cmd /c statement now passes only when its command is a known read; writer cmdlets and aliases, .NET static calls, & and dot-source invocation, script paths, stdin scripts, glued -EncodedCommand forms, xargs -J and find -exec {} count as writes in their run directory
+
+## [2.25.5] - 2026-11-26
+
+### Fixed
+
+- under a judge's or an implementer's confinement, a pwsh or powershell -File script (and pwsh x.ps1), an -EncodedCommand (-enc, -e), iex or Invoke-Expression inside a -Command script, a cmd /c link or write target spelled with a %VAR% or !VAR! variable, and an xargs or parallel command whose name stdin fills in (xargs -I{} {} f) count as a write in the directory they run in; pwsh -c Get-ChildItem, cmd /c dir and xargs cat still run (#880).
 
 ## [2.25.4] - 2026-11-26
 
@@ -1995,7 +2064,22 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.4...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.9...HEAD
+[2.27.9]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.8...workit-dev-v2.27.9
+[2.27.8]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.7...workit-dev-v2.27.8
+[2.27.7]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.6...workit-dev-v2.27.7
+[2.27.6]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.5...workit-dev-v2.27.6
+[2.27.5]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.4...workit-dev-v2.27.5
+[2.27.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.3...workit-dev-v2.27.4
+[2.27.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.2...workit-dev-v2.27.3
+[2.27.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.1...workit-dev-v2.27.2
+[2.27.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.27.0...workit-dev-v2.27.1
+[2.27.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.26.2...workit-dev-v2.27.0
+[2.26.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.26.1...workit-dev-v2.26.2
+[2.26.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.26.0...workit-dev-v2.26.1
+[2.26.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.6...workit-dev-v2.26.0
+[2.25.6]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.5...workit-dev-v2.25.6
+[2.25.5]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.4...workit-dev-v2.25.5
 [2.25.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.3...workit-dev-v2.25.4
 [2.25.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.2...workit-dev-v2.25.3
 [2.25.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.1...workit-dev-v2.25.2
