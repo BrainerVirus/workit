@@ -51,7 +51,12 @@ import {
   workspaceChangelog,
   workspaceDeleteBranch,
   workspacePrTemplate,
+  workspaceShared,
 } from "@workit-dev/core/src/core/workspaces";
+import {
+  sharedWorkspaceWarnings,
+  type SharedHit,
+} from "@workit-dev/core/src/core/workspace-shared";
 import {
   checkPrBody,
   honestPrBody,
@@ -981,6 +986,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
   const honest = honestPrBody(io.cwd, body ?? "", prTemplate?.template);
   for (const item of honest.unchecked)
     io.stderr(`note: unticked "${item}": no fresh workit check on the head backs it\n`);
+  const sharedWarnings = warnShared(io, { title, body: body ?? "", fork: () => forkPoint().fork });
   const actor = actorFromEnv(io.env);
   const result = await progressFor(io).run(
     "Opening the pull request",
@@ -1035,6 +1041,7 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     linked,
     ...((planned.data.backlink && links.length) || backlinks.length ? { backlinks } : {}),
     ...(planned.data.warnings.length ? { warnings: planned.data.warnings } : {}),
+    ...(sharedWarnings.length ? { sharedWarnings } : {}),
     ...(releaseTrack ? { releaseTrack } : {}),
     ...(route ? { flow: route } : {}),
     ...checkData,
@@ -1056,6 +1063,29 @@ async function create(argv: string[], io: Io, internal: CreateInternal = {}): Pr
     ...("error" in data.recorded ? [`ledger: not recorded (${data.recorded.error})`] : []),
     `next: ${data.next}${endpointNote(io.cwd)}`,
   ]);
+}
+
+/**
+ * In a `shared` workspace (#879), warn on stderr for each place the PR names
+ * Workit: the title, the body, a doc the branch adds. Never blocks; an
+ * unshared workspace resolves no fork point and prints nothing. Returns one
+ * hit per line for the `--json` outcome's `sharedWarnings`.
+ */
+function warnShared(
+  io: Io,
+  input: { title?: string | undefined; body?: string | undefined; fork: () => string | null },
+): SharedHit[] {
+  const shared = workspaceShared(io.cwd);
+  if (!shared.enabled) return [];
+  const { messages, hits } = sharedWorkspaceWarnings({
+    cwd: io.cwd,
+    workspace: shared.workspace,
+    title: input.title,
+    body: input.body,
+    fork: input.fork(),
+  });
+  for (const message of messages) io.stderr(`warning: ${message}\n`);
+  return hits;
 }
 
 /** Test seam: the `workit git` verb that commits and pushes a `--changelog` entry. */
@@ -1610,12 +1640,21 @@ async function edit(argv: string[], io: Io): Promise<number> {
     return result.code === "invalid_input"
       ? usage(io, result.error, EDIT_USAGE)
       : forgeFail(io, result);
+  const sharedWarnings = warnShared(io, {
+    title: flags.values.title,
+    body,
+    fork: () => resolveForkPoint(io.cwd, result.data.base, connected.data.baseRemote).fork,
+  });
   const kind = connected.data.forge.kind;
   // A YouTrack backlink `pr create` left pending posts once after the yes (#780).
   const backlinks = await pendingBacklinks(io.cwd, connected.data, result.data, { env: io.env });
   return emit(
     io,
-    ok({ ...result.data, ...(backlinks.length ? { backlinks } : {}) }),
+    ok({
+      ...result.data,
+      ...(backlinks.length ? { backlinks } : {}),
+      ...(sharedWarnings.length ? { sharedWarnings } : {}),
+    }),
     (data: EditOutcome) => [
       `edited ${prLabel(kind, data.number)} (${data.changed.join(", ")}): ${data.title} -> ${data.base}  ${data.url}`,
       ...backlinkLines(backlinks),

@@ -269,6 +269,10 @@ export const workspaceConfigSchema = z
       z.optional(z.boolean()),
       "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
     ),
+    shared: described(
+      z.optional(z.boolean()),
+      "Whether this workspace's repos are shared with a team that must not see Workit named (default false): `workit pr create` and `workit pr edit` then warn, never block, when the PR title, body or a new doc names it.",
+    ),
     // tierModels is read leniently (workspaceTierModel), deps and installTimeout
     // too (workspaceFanoutDeps).
     fanout: described(
@@ -1391,6 +1395,19 @@ export const workspaceFanoutDeps = (
 export const workspaceLiveSessionGuard = (cwd: string, dir?: string): boolean =>
   inheritedSetting(cwd, dir, (entry) => typeof entry.liveSessionGuard === "boolean")?.source
     ?.liveSessionGuard !== false;
+
+/**
+ * Whether cwd's workspace is `shared` (#879): a team repo where `pr create`
+ * and `pr edit` warn when the PR names Workit. Default false, inherited like
+ * `trailers`; an unreadable workspaces.json reads as not shared.
+ */
+export const workspaceShared = (
+  cwd: string,
+  dir?: string,
+): { enabled: boolean; workspace: string | null } => {
+  const found = inheritedSetting(cwd, dir, (entry) => typeof entry.shared === "boolean");
+  return { enabled: found?.source?.shared === true, workspace: found?.workspace ?? null };
+};
 
 export const DELEGATION_MODES = ["inline-first", "lead-orchestrates"] as const;
 export type DelegationMode = (typeof DELEGATION_MODES)[number];

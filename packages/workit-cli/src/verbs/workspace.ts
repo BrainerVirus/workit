@@ -145,6 +145,7 @@ const SETTABLE_KEYS = new Set([
   "trailers",
   "deleteBranch",
   "liveSessionGuard",
+  "shared",
   "youtrack",
   "models",
   "fanout",
