@@ -465,13 +465,19 @@ voided, with the same result and session, by a host-issued `<lead>:<agent>`
 session (a real host, never `cli` or `--as`, and a `--session` one only with
 its token) that authored neither branch, on a range whose set hash is the
 row's. Its 7 days run from that ledger verdict. Both the store
-(`<state>/verdicts/`) and every ledger (`<git common dir>/workit/ledger/`,
-or `<state>/folders/<slug>/ledger/` outside git) are guarded paths: an agent's Edit,
-Write or shell write to them is denied (the ledger guard).
+(`<state>/verdicts/`) and every ledger (`<git common dir>/workit/ledger/`, a
+bare repository's or a `--separate-git-dir` one's included, or
+`<state>/folders/<slug>/ledger/` outside git) are guarded paths: an agent's Edit,
+Write or shell write to them is denied (the ledger guard), and so is a link or
+mount (`ln`, `cp -s|-l`, `install -l`, `rsync --link-dest`, `mount`, `bindfs`,
+and on Windows `mklink` and `New-Item -ItemType SymbolicLink|Junction|HardLink`)
+to them or a dir that holds them.
 
 `workit ledger void <id>` of a verdict shared with `--set` also retires the
 set verdict: a void row in the same store, after which it covers no PR in
-any repository (`pr status` notes that it was voided).
+any repository (`pr status` notes that it was voided). The Stop hook stops
+trusting the `pr.gate` row `pr status` recorded for a head once the verdict it
+cited is voided or its set cover expires, and asks for a verdict again.
 
 Every `policy assess` is recorded in the ledger as a `policy.judged` row
 (session, what was sent, the resulting requirements). A session that judged

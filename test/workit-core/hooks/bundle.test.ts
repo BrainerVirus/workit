@@ -125,7 +125,13 @@ const HOOK_ENTRIES = [
 // sealed additiveRiskPaths schema key and the effectful-append deny-list take core run from 553,461 B
 // to 554,496 B (+1,035 B; Claude Code 547,847 B, Codex 536,170 B, Cursor 535,564 B). The ceiling is
 // core run plus 2 KiB; whichever of #955 and #956 merges second reconciles it.
-const BUDGET = 556_544;
+// guard residuals (#891 review, 2026-11-26, Bun 1.4.5, on a3dafa5a): the link and mount source check,
+// ledgers under a git common dir not named .git, and the Stop hook's pr.gate retirement (gateStands)
+// and the Windows link forms (`mklink`, `New-Item -ItemType SymbolicLink`, unquoted `C:\` sources),
+// `install -l` and `rsync --link-dest` take core run from 554,496 B to 557,329 B (+2,833 B; Claude
+// Code 550,682 B, Codex 539,005 B, Cursor 538,399 B). The ceiling is core run plus 2 KiB; whichever
+// of this and #956 merges second reconciles it.
+const BUDGET = 559_377;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

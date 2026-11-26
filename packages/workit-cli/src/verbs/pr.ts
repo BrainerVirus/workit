@@ -98,7 +98,7 @@ import {
   type ReadRow,
 } from "@workit-dev/core/src/ledger";
 import { checkVerdictsCovered, type StackCover } from "@workit-dev/core/src/verdict-cover";
-import { setCoverLabel, type SetCover } from "@workit-dev/core/src/core/verdict-set";
+import { gateStands, setCoverLabel, type SetCover } from "@workit-dev/core/src/core/verdict-set";
 import {
   DEPENDENCY_BUMP_EVIDENCE,
   untrackedRiskPathsWarning,
@@ -680,7 +680,8 @@ function verdictBlock(
 /**
  * A `pr.gate` row (#891): the merge gate read as met for this head, and by
  * what. The Stop hook reads it instead of recomputing set and stack verdicts
- * or the sealed additiveRiskPaths, which its bundle cannot carry. Once per head.
+ * or the sealed additiveRiskPaths, which its bundle cannot carry. Once per head
+ * while it stands (gateStands): a void or an expired set cover lets a new one in.
  */
 function recordGate(
   cwd: string,
@@ -696,7 +697,11 @@ function recordGate(
 ): void {
   if (
     rows.some(
-      (row) => row.type === "pr.gate" && row.branch === input.branch && row.head === input.head,
+      (row) =>
+        row.type === "pr.gate" &&
+        row.branch === input.branch &&
+        row.head === input.head &&
+        gateStands(cwd, row, rows),
     )
   )
     return;
@@ -710,6 +715,8 @@ function recordGate(
     need: input.gate.need,
     verdictId: input.gate.verdictId,
     via: input.check.set ? "set" : input.check.cover ? "stack" : "own",
+    // The Stop hook stops trusting a set cover when it expires.
+    ...(input.check.set ? { expires: input.check.set.expires } : {}),
   });
 }
 

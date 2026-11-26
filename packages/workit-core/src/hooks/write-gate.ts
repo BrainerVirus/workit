@@ -779,6 +779,74 @@ const linkSources = (args: readonly string[], at: (file: string) => string | nul
   });
 };
 
+const WINDOWS_LINK_TYPE = /^(?:symboliclink|junction|hardlink)$/i;
+
+/**
+ * The paths a link or mount command reaches (resolved by `at`/`atAll`), each
+ * checked by the registry guard as a source (LINK_SOURCE): `ln` (a relative
+ * symbolic source from the link's dir and from here), `cp -l|-s`, `mount`,
+ * `bindfs` (every operand), `install -l`, `rsync --link-dest` (from here and
+ * from the destination), and on Windows `mklink` (also as `cmd /c mklink`) and
+ * `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink` (both paths).
+ */
+const linkReach = (
+  verb: string,
+  args: string[],
+  at: (file: string) => string | null,
+  atAll: (file: string) => string[],
+): string[] => {
+  const all = (files: readonly string[]) => files.flatMap((file) => atAll(file));
+  const names = operands(args);
+  if (verb === "mount" || verb === "bindfs") return all(names);
+  if (
+    verb === "ln" ||
+    (verb === "cp" && args.some((arg) => /^-[a-zA-Z]*[ls]|^--(?:link|symbolic-link)$/.test(arg)))
+  )
+    return [...linkSources(args, at), ...all(names.length < 2 ? names : names.slice(0, -1))];
+  if (verb === "install") {
+    const flag = args.findIndex((arg) => arg.startsWith("-l"));
+    if (flag < 0) return [];
+    const rest = operands(
+      args.filter((_, index) => index !== flag && (args[flag] !== "-l" || index !== flag + 1)),
+    );
+    return all(rest.slice(0, -1));
+  }
+  if (verb === "rsync") {
+    const dest = names.at(-1);
+    return args.flatMap((arg, index) => {
+      const match = /^--link-dest(?:=(.*))?$/s.exec(arg);
+      const dir = match ? (match[1] ?? args[index + 1]) : undefined;
+      if (!dir) return [];
+      // A relative dir is read from the destination.
+      return [...atAll(dir), ...(dest && !path.isAbsolute(dir) ? atAll(path.join(dest, dir)) : [])];
+    });
+  }
+  // `cmd /c mklink …` (one quoted word or several).
+  const shell = /^cmd(?:\.exe)?$/.test(verb) ? args.findIndex((arg) => /^\/[ck]$/i.test(arg)) : -1;
+  const inner =
+    shell < 0
+      ? []
+      : args
+          .slice(shell + 1)
+          .flatMap((arg) => arg.split(/\s+/))
+          .filter(Boolean);
+  const mklink =
+    verb === "mklink" ? args : inner[0]?.toLowerCase() === "mklink" ? inner.slice(1) : null;
+  if (mklink) return all(mklink.filter((arg) => !/^\/[dhj]$/i.test(arg)));
+  if (
+    (verb === "new-item" || verb === "ni") &&
+    args.some((arg) => WINDOWS_LINK_TYPE.test(arg.replace(/^-[\w-]+:/, "")))
+  )
+    return all(
+      args.flatMap((arg) => {
+        // `-Target:C:\x` holds its value; another flag is a name.
+        const value = arg.startsWith("-") ? /^-[\w-]+:(.+)$/s.exec(arg)?.[1] : arg;
+        return value && !WINDOWS_LINK_TYPE.test(value) ? [value] : [];
+      }),
+    );
+  return [];
+};
+
 /**
  * Whether a shell command recognizably edits files (redirects, `>& file`,
  * tee, sponge, touch, mkdir, cp/mv/rm, `sed -i`/`perl -i`, dd, and working-tree git: apply,
@@ -941,6 +1009,8 @@ export const OPAQUE_TARGET = ".workit-runs-";
  * guarded dir, built from a value Workit cannot resolve (#837).
  */
 const UNRESOLVED_TARGET = ".workit-unresolved-target";
+/** Stands under a path a command links or mounts (`<source>/.workit-link-source`): the registry guard asks whether it is or holds a guarded path. */
+const LINK_SOURCE = ".workit-link-source";
 
 /** A one-command override: `WORKIT_LIVE_SESSION=override <command>`. */
 const OVERRIDE = "WORKIT_LIVE_SESSION=override";
@@ -1654,9 +1724,10 @@ const segmentTargets = (
           ))
       )
         for (const file of operands(args)) targets.push(...atAll(file));
-      // `cp -l` makes a hard link: a second name for its source.
-      if (verb === "cp" && args.some((arg) => /^-[a-zA-Z]*l|^--link$/.test(arg)))
-        for (const file of operands(args).slice(0, -1)) targets.push(...atAll(file));
+      // A link reaches its source: a write through it lands there, even one later
+      // in this command, before the link exists.
+      for (const source of linkReach(verb, args, at, atAll))
+        targets.push(path.join(source, LINK_SOURCE));
     }
     if (strict && dir !== undefined) {
       const runIn = dir;
@@ -1713,7 +1784,8 @@ const segmentTargets = (
             );
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);
-      // The registry guard: a hard link is a second name for its source; a symbolic one only points.
+      // A hard link is a second name for its source. The registry guard judges every
+      // link's source above (LINK_SOURCE), a symbolic one included.
       if (
         ln >= 0 &&
         words.slice(0, ln).every((word) => PREFIXES.has(word)) &&
@@ -1890,8 +1962,11 @@ export const liveTargets = (cwd: string, paths: readonly string[] | null): strin
  * own grants.
  */
 type Registry = "issued" | "approvals" | "grants" | "ledger";
-/** A guarded registry, or "link": a symlink chain too long to follow, which may reach one. */
-type Denied = Registry | "link";
+/**
+ * A guarded registry; "link", a symlink chain too long to follow, which may
+ * reach one; or "holds", a link or mount source that holds one.
+ */
+type Denied = Registry | "link" | "holds";
 
 /** The config files only the user writes: grants and the seal that vouches for them (#819). */
 const CONFIG_FILES = ["workspaces.json", SEAL_FILE];
@@ -1998,6 +2073,47 @@ const hardLinked = (
   }
 };
 
+/**
+ * Whether `file` is in a repository ledger, `<git common dir>/workit/ledger`:
+ * under a dir named `.git`, or one holding HEAD and objects (a bare repository,
+ * `--separate-git-dir`). Every `workit/ledger` in the path counts.
+ */
+export const inRepoLedger = (file: string): boolean =>
+  [...file.matchAll(/[\\/]workit[\\/]ledger(?=[\\/]|$)/g)].some(({ index }) => {
+    const gitDir = file.slice(0, index);
+    return (
+      /(?:^|[\\/])\.git$/.test(gitDir) ||
+      (existsSync(path.join(gitDir, "HEAD")) && existsSync(path.join(gitDir, "objects")))
+    );
+  });
+
+/**
+ * Whether `source` holds a guarded path, so a link to it reaches one: it is an
+ * ancestor of the state dir, a config dir or a folder ledger
+ * (`<state>/folders[/<slug>]`), or of a repository ledger it or its `.git`
+ * holds, or of the ledger of the repository `cwd` is in.
+ */
+const holdsGuarded = (cwd: string, source: string, state: string, configs: string[]): boolean => {
+  const real = canonical(source);
+  const below = (parent: string, child: string) => {
+    const rel = path.relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  const holds = (file: string) => below(real, canonical(file));
+  const inState = path.relative(canonical(state), real).split(path.sep);
+  const ledgers = ["ledger", "workit/ledger", ".git/workit/ledger"]
+    .map((rel) => path.join(real, rel))
+    .filter((dir) => existsSync(dir) && inRepoLedger(dir));
+  const own = ledgerPath(cwd);
+  return (
+    holds(state) ||
+    (below(canonical(state), real) && inState[0] === "folders" && inState.length <= 2) ||
+    configs.some(holds) ||
+    ledgers.length > 0 ||
+    (own.ok && existsSync(own.value) && holds(path.dirname(own.value)))
+  );
+};
+
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
@@ -2008,6 +2124,14 @@ const registryTarget = (
   const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
+    if (path.basename(file) === LINK_SOURCE) {
+      const source = path.dirname(path.resolve(cwd, file));
+      const reached =
+        registryTarget(cwd, [source])?.registry ??
+        (holdsGuarded(cwd, source, state, configs) ? "holds" : null);
+      if (reached) return { file: target, registry: reached };
+      continue;
+    }
     if (realPath(path.resolve(cwd, file)) === null) return { file: target, registry: "link" };
     const glob = globbed(cwd, file, state, configs)[0];
     const viaGlob = glob === undefined ? null : registryTarget(cwd, [glob]);
@@ -2015,9 +2139,7 @@ const registryTarget = (
     const registry =
       hardLinked(path.resolve(cwd, file), state, configs, inodes) ??
       underRegistry(state, cwd, file, process.platform, canonical) ??
-      (/[\\/]\.git[\\/]workit[\\/]ledger(?:[\\/]|$)/.test(canonical(path.resolve(cwd, file)))
-        ? "ledger"
-        : null) ??
+      (inRepoLedger(canonical(path.resolve(cwd, file))) ? "ledger" : null) ??
       (configs.some((dir) => underConfig(dir, cwd, file, process.platform, canonical))
         ? "grants"
         : null);
@@ -2092,6 +2214,19 @@ export const underConfig = (
 };
 
 /**
+ * On Windows, `command` with each word that holds a `\` spelled with `/`
+ * (which Windows reads the same), so the POSIX analysis keeps its separators;
+ * null elsewhere or with no `\`.
+ */
+export const windowsSlashed = (
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null =>
+  platform === "win32" && command.includes("\\")
+    ? command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) => word.replaceAll("\\", "/"))
+    : null;
+
+/**
  * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
  * `> C:\state\issued\x` loses its separators. On Windows, a command that
  * spells out a registry path is judged with its backslashes turned into
@@ -2109,27 +2244,25 @@ export const unquotedWindowsRegistry = (
   const configs = configDirs().map(flat);
   // The verdict store, a repository ledger, or a non-git folder's ledger.
   const folders = `${state}/folders/`;
-  const ledger = (at: string) =>
+  const ledger = (at: string, named = false) =>
     at.includes(`${state}/verdicts`) ||
-    /\/\.git\/workit\/ledger(?:[/\s'"]|$)/.test(at) ||
+    (named ? inRepoLedger(at) : /\/workit\/ledger(?:[/\s'"]|$)/.test(at)) ||
     at
       .split(folders)
       .slice(1)
       .some((rest) => /^[^/\s]+\/ledger(?:[/\s'"]|$)/.test(rest));
-  const registry: Registry | null = text.includes(`${state}/issued`)
-    ? "issued"
-    : text.includes(`${state}/approvals`)
-      ? "approvals"
-      : ledger(text)
-        ? "ledger"
-        : configs.some((dir) => text.includes(dir))
-          ? "grants"
-          : null;
-  if (!registry) return null;
-  const spans = command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) =>
-    word.replaceAll("\\", "/"),
+  // Each registry the text names; a write to any of them counts.
+  const present = (["issued", "approvals", "ledger", "grants"] as const).filter((kind) =>
+    kind === "ledger"
+      ? ledger(text)
+      : kind === "grants"
+        ? configs.some((dir) => text.includes(dir))
+        : text.includes(`${state}/${kind}`),
   );
+  if (!present.length) return null;
+  const spans = windowsSlashed(command, platform) ?? command;
   const writes = shellWrites(spans);
+  if (!writes.writes) return null;
   // A relative target lands in the dir a `cd` or `pushd` moved to.
   const moved = [
     "",
@@ -2137,7 +2270,7 @@ export const unquotedWindowsRegistry = (
       (match) => `${match[1]}/`,
     ),
   ];
-  const named = (target: string) =>
+  const named = (registry: Registry, target: string) =>
     moved.some((dir) => {
       const at = flat(/^(?:[a-z]:)?\//i.test(target) ? target : dir + target).replace(
         /\/\.?\//g,
@@ -2148,17 +2281,30 @@ export const unquotedWindowsRegistry = (
             [cfg, `${cfg}/`, ...CONFIG_FILES.map((name) => `${cfg}/${name}`)].includes(at),
           )
         : registry === "ledger"
-          ? ledger(at)
+          ? ledger(at, true)
           : at.includes(`${state}/${registry}`);
     });
-  return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
+  return (
+    present.find(
+      (registry) =>
+        writes.targets === null || writes.targets.some((target) => named(registry, target)),
+    ) ?? null
+  );
 };
+
+const LINK_UNBLOCK =
+  "Never link or bind-mount Workit's state, config or ledgers: a write through the link would land in them. Read the file in place.";
 
 const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: string }> = {
   link: {
     label: "registry guard",
     what: "a symlink chain Workit could not resolve (over 40 links), which may reach a guarded path",
     unblock: "Write to the file's real path.",
+  },
+  holds: {
+    label: "registry guard",
+    what: "Workit's state, its config or a repository ledger",
+    unblock: LINK_UNBLOCK,
   },
   issued: {
     label: "issued-registry guard",
@@ -2187,6 +2333,12 @@ const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: stri
 
 const registryDeny = ({ file, registry }: { file: string; registry: Denied }): HookDecision => {
   const { label, what, unblock } = REGISTRY_DENY[registry];
+  if (path.basename(file) === LINK_SOURCE)
+    return {
+      kind: "deny",
+      reason: `workit ${label}: this command links or mounts ${path.dirname(file)}, which is or holds ${what}. ${LINK_UNBLOCK}`,
+      unblock: LINK_UNBLOCK,
+    };
   if (path.basename(file) === UNRESOLVED_TARGET)
     return {
       kind: "deny",
@@ -2243,8 +2395,13 @@ export function shellGate(
 ): HookDecision {
   try {
     const windows = unquotedWindowsRegistry(command);
+    // An unquoted `C:\…` path loses its `\` to the POSIX analysis: judged again with `/`.
+    const slashed = dialect === "posix" ? windowsSlashed(command) : null;
     const forged =
       registryTarget(cwd, shellMutationTargets(cwd, command, dialect, "registry")) ??
+      (slashed === null
+        ? null
+        : registryTarget(cwd, shellMutationTargets(cwd, slashed, dialect, "registry"))) ??
       (windows ? { file: `the ${windows} registry`, registry: windows } : null);
     if (forged) return registryDeny(forged);
   } catch {

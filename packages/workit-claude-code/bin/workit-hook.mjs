@@ -383,6 +383,16 @@ const reachTests = (dirs) => {
   };
   const state = canon(dirs.state);
   const configs = dirs.configs.map(canon);
+  // `<git common dir>/workit/ledger`: under `.git`, or a dir holding HEAD and
+  // objects (a bare repository, `--separate-git-dir`; write-gate.ts inRepoLedger).
+  const repoLedger = (file) =>
+    [...file.matchAll(/[\\/]workit[\\/]ledger(?=[\\/]|$)/g)].some(({ index }) => {
+      const gitDir = file.slice(0, index);
+      return (
+        /(?:^|[\\/])\.git$/.test(gitDir) ||
+        (existsSync(path.join(gitDir, "HEAD")) && existsSync(path.join(gitDir, "objects")))
+      );
+    });
   const at = (file) =>
     file === LOST ||
     configs.some((dir) => within(dir, file)) ||
@@ -390,7 +400,7 @@ const reachTests = (dirs) => {
       /^(?:issued[^\\/]*|approvals|verdicts|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
         path.relative(state, file),
       )) ||
-    /[\\/]\.git[\\/]workit[\\/]ledger(?:[\\/]|$)/.test(file);
+    repoLedger(file);
   const above = (file) => within(file, state) || configs.some((dir) => within(file, dir));
   const linked = (file) => {
     try {
@@ -427,7 +437,14 @@ const mayReachWith = (text, cwd, dirs) => {
     /\$['"]/.test(joined) ||
     /~[\w+-]|\$\{(?:!|\w+[^\w}])|\bpopd\b/.test(bare) ||
     /(?:^|[\s;&|(])(?:cd|pushd|chdir)(?:\s+-\S*)*\s*(?:$|[;&|)\n$`])/.test(bare) ||
-    (dirs.env.CDPATH !== undefined && /\b(?:cd|pushd)\b/.test(bare))
+    (dirs.env.CDPATH !== undefined && /\b(?:cd|pushd)\b/.test(bare)) ||
+    // A link or mount (`ln`, `cp -l|-s`, `install -l`, `rsync --link-dest`, `mount`,
+    // `bindfs`, `mklink`, `New-Item -ItemType SymbolicLink`): the gate judges its source.
+    /(?:^|[\s;&|(/])(?:ln|mount|bindfs|mklink)(?:\s|$)/i.test(bare) ||
+    /(?:^|[\s;&|(/])(?:cp|install)\s[^;&|\n]*\s(?:-[a-zA-Z]*[ls]|--(?:link|symbolic-link)\b)/.test(
+      bare,
+    ) ||
+    /--link-dest\b|\b(?:symboliclink|junction|hardlink)\b/i.test(bare)
   )
     return true;
   // d. Every word as a path, from every directory a `cd` may reach.

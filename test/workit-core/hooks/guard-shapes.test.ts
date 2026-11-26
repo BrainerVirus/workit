@@ -127,7 +127,6 @@ const READS: Record<string, Shape> = {
   "git -C status": (_f, d) => `git -C ${d} status`,
   find: (_f, d) => `find ${d} -name '*.json'`,
   "vim with no write command": (f) => `vim ${f}`,
-  "ln -s": (f) => `ln -s ${f} view.json`,
   "eval read": (f) => `eval "cat ${f}"`,
 };
 
@@ -236,7 +235,7 @@ test("G a write target with a glob, W it may expand to a guarded path, T matched
     expect(decide(command).kind, command).toBe("none");
 });
 
-test("G a hard link to a guarded file, W a shell or the Edit tool writes it, or a command makes one, T denied; a symlink and unrelated links pass", () => {
+test("G a hard link to a guarded file, W a shell or the Edit tool writes it, or a command makes one, T denied; a symlink to one too (a write through it lands there); unrelated links pass", () => {
   const links = path.join(root, "links");
   mkdirSync(links, { recursive: true });
   for (const kind of KINDS) {
@@ -250,7 +249,7 @@ test("G a hard link to a guarded file, W a shell or the Edit tool writes it, or 
     ])
       expect(decide(command).kind, `${kind.name}: ${command}`).toBe("deny");
     expect(writeGate(root, [link]).kind, `${kind.name}: Edit through a hard link`).toBe("deny");
-    expect(decide(`ln -s ${sh(kind.file)} links/${kind.name}-view.json`).kind).toBe("none");
+    expect(decide(`ln -s ${sh(kind.file)} links/${kind.name}-view.json`).kind).toBe("deny");
   }
   writeFileSync(path.join(links, "two.json"), "{}");
   linkSync(path.join(links, "two.json"), path.join(links, "two-b.json"));

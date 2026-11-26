@@ -478,8 +478,20 @@ Issued-registry guard limits (#292):
     never by its arguments.
   - (L) A variable whose value in the command shell differs from the hook's own
     environment is not resolved.
+  - A link or mount whose source is or holds a guarded path is denied when the
+    command makes it, so a write later in the same command (before the link
+    exists, when the hook reads it) cannot pass through it: `ln` (hard, `-s`,
+    `-f`, `-T`, `--symbolic`), `cp -s|-l|--link|--symbolic-link`, `install -l`,
+    `rsync --link-dest` (a relative dir read from the destination), `mount`,
+    `bindfs`, and on Windows `mklink` (`/D`, `/J`, `/H`, also in `cmd /c`) and
+    `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink`. On Windows a
+    command with unquoted `C:\…` paths is judged a second time with them
+    spelled with `/`, since a POSIX shell drops the `\`. A source holds one when it is an ancestor of the state or a config
+    dir, a repository's root, git dir or `workit` dir holding a ledger, or an
+    ancestor of the ledger of the repository the command runs in.
   - (L) A hard link made and written inside a program Workit cannot read is not
-    seen.
+    seen, nor a link to an ancestor of another repository's ledger (beyond its
+    root, git dir and `workit` dir).
   - (L) A command handed to a scheduler (`at`, `crontab`, `systemd-run`) is not
     judged.
   - (L) An archive extracted into a directory above a guarded path is judged by
@@ -497,7 +509,8 @@ Issued-registry guard limits (#292):
     it creates, #837), hard links, `~`, the hook's own env for an unset `$NAME`,
     and any glob, brace or set variable near a guarded dir's ancestry; it says
     yes to every spelling it does not resolve (`~user`, `$'…'`, `${X:-…}`, a
-    `cd` with no literal target, `popd`, `CDPATH`, more than 64 words). A
+    `cd` with no literal target, `popd`, `CDPATH`, more than 64 words, and any
+    link or mount form above). A
     Claude Code edit goes to the runtime with a task store, for a confined
     agent, or when its file may reach a guarded path. A write whose text
     hides every marker (a program that writes where its own code says) is not

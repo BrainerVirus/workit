@@ -40,6 +40,7 @@ import { spawnSync } from "node:child_process";
 import { resolveAutonomy, type VerificationMode } from "../autonomy";
 import { liveCiWaiter, type CiWaiter } from "../ci-waiter";
 import { currentJudgment } from "../core/policy/current-judgment";
+import { gateStands } from "../core/verdict-set";
 import { branchLane, laneNeed } from "../core/policy/lane";
 import { currentBranch, pushRemoteName } from "../git/rev";
 import { branchHold, checkVerdicts, readLedger, type ReadRow } from "../ledger";
@@ -294,9 +295,18 @@ const unverified = (
   const check = checkVerdicts(cwd, branch, all);
   if (check.accepted.accepted || check.accepted.reasons.includes("failing_verdict")) return null;
   // The merge gate `pr status` read as met for this head (a set or stack
-  // verdict, a sealed additiveRiskPaths, #891): its `pr.gate` row stands.
+  // verdict, a sealed additiveRiskPaths, #891): its `pr.gate` row stands
+  // until the verdict it cited is voided or its set cover expires.
   // Only the CLI writes that type, and `all` holds chained rows only.
-  if (all.some((row) => row.type === "pr.gate" && row.branch === branch && row.head === check.head))
+  if (
+    all.some(
+      (row) =>
+        row.type === "pr.gate" &&
+        row.branch === branch &&
+        row.head === check.head &&
+        gateStands(cwd, row, all),
+    )
+  )
     return null;
   const judgment = currentJudgment(cwd);
   const high = judgment?.riskTier === "high";
