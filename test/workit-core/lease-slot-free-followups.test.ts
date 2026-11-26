@@ -12,6 +12,7 @@ import { estimateWait } from "@/packages/workit-core/src/core/heavy-eta";
 import { reapStuck } from "@/packages/workit-core/src/core/heavy-lease";
 import {
   acquireLease,
+  admit,
   admittedDir,
   admittedHolders,
   DEFAULT_AGING_MS,
@@ -265,4 +266,93 @@ test("Given checks configured with their own heavy, Then the repo's resolved set
   ]);
   expect(settings.heavy).toContain("e2e");
   expect(settings.heavy).not.toContain("fetch");
+});
+
+test("Given a longer configured maxHold, When a dev server is admitted, Then a slot-free check past the default auto-reap bound but within its own is kept", () => {
+  const dir = leases();
+  const old = ago(4 * DEFAULT_MAX_HOLD_MS);
+  const quiet = admittedEntry(dir, { pid: 946_001, kind: "io", startedAt: old, heartbeatAt: old });
+  const server = (maxHoldMs?: number) =>
+    admit({
+      dir,
+      kind: "server",
+      label: "vite",
+      rssBytes: GIB / 2,
+      cwd: "/repo/mine",
+      session: "s-lead",
+      pid: 946_002,
+      budget: memory(),
+      probe: PROBE,
+      ...(maxHoldMs === undefined ? {} : { maxHoldMs }),
+    });
+  const long = server(2 * 60 * MINUTE);
+  expect(long.ok).toBe(true);
+  expect(existsSync(quiet)).toBe(true);
+  if (long.ok) long.admission.release();
+  // The default 15 min bound reaps it: past 3x that and silent.
+  const short = server();
+  expect(short.ok).toBe(true);
+  expect(existsSync(quiet)).toBe(false);
+  if (short.ok) short.admission.release();
+});
+
+test("Given an aged waiter blocked by slots, not memory, When an io check asks, Then it still runs without a slot (deliberately: it takes no slot)", async () => {
+  const dir = leases();
+  const slotsBudget: Budget = { ...memory(), mode: "slots", units: 1, weights: {} };
+  const suite = await held(dir, { pid: 947_001, slots: 1, budget: slotsBudget });
+  const aged = acquireLease(
+    options(dir, {
+      pid: 947_002,
+      slots: 1,
+      budget: slotsBudget,
+      check: "big",
+      clock: behind(DEFAULT_AGING_MS + MINUTE),
+    }),
+  );
+  await until(() => leaseQueue(dir, PROBE).length === 1);
+  const io = await acquireLease(
+    options(dir, {
+      pid: 947_003,
+      slots: 1,
+      budget: slotsBudget,
+      check: "fetch",
+      io: true,
+      waitMs: 0,
+    }),
+  );
+  expect(io.ok && io.lease.admitted).toBe("io");
+  if (io.ok) io.lease.release();
+  suite.release();
+  const got = await aged;
+  if (got.ok) got.lease.release();
+});
+
+test("Given an aged waiter blocked by units while its memory fits, When an io check asks, Then it still runs without a slot", async () => {
+  const dir = leases();
+  // One unit: the suite holds it; the waiter needs 512 MiB of the 3.5 GiB left, so only units block it.
+  const units: Budget = {
+    ...memory(),
+    mode: "default",
+    units: 1,
+    weights: { suite: { bytes: GIB / 2 } },
+  };
+  const suite = await held(dir, { pid: 948_001, slots: 1, budget: units });
+  const aged = acquireLease(
+    options(dir, {
+      pid: 948_002,
+      slots: 1,
+      budget: units,
+      check: "big",
+      clock: behind(DEFAULT_AGING_MS + MINUTE),
+    }),
+  );
+  await until(() => leaseQueue(dir, PROBE).length === 1);
+  const io = await acquireLease(
+    options(dir, { pid: 948_003, slots: 1, budget: units, check: "fetch", io: true, waitMs: 0 }),
+  );
+  expect(io.ok && io.lease.admitted).toBe("io");
+  if (io.ok) io.lease.release();
+  suite.release();
+  const got = await aged;
+  if (got.ok) got.lease.release();
 });

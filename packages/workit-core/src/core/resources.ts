@@ -1590,6 +1590,12 @@ export type AdmitOptions = {
   ref?: string | null;
   /** The holder's checkout's budget (resolveResourceSettings, then withGate); default: the machine's defaults. */
   budget?: Budget;
+  /**
+   * The checkout's `resources.maxHold` (settings.maxHoldMs); default DEFAULT_MAX_HOLD_MS. It
+   * judges when a slot-free check without its own limit is past its auto-reap bound, as
+   * acquireLease does, so a longer configured hold never reaps one early.
+   */
+  maxHoldMs?: number;
   probe?: LeaseProbe;
   now?: number;
 };
@@ -1679,8 +1685,9 @@ export function admit(options: AdmitOptions): AdmitResult {
   for (let attempt = 0; attempt < GUARD_TRIES; attempt += 1) {
     const outcome = underGuard(options.dir, () => {
       const probe = options.probe ?? {};
-      pruneAdmitted(options.dir, probe, DEFAULT_MAX_HOLD_MS);
-      const use = budgetUse(options.dir, MAX_SLOTS, budget, probe, DEFAULT_MAX_HOLD_MS);
+      const maxHold = options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
+      pruneAdmitted(options.dir, probe, maxHold);
+      const use = budgetUse(options.dir, MAX_SLOTS, budget, probe, maxHold);
       const holders = [...use.checks, ...use.admitted];
       if (use.used.bytes + (record.bytes ?? 0) > budget.memoryBytes)
         return { ok: false as const, holders, used: use.used.bytes };
@@ -1985,7 +1992,12 @@ export async function acquireLease(options: AcquireOptions): Promise<AcquireResu
       // A short or network-bound check runs without a slot, the memory budget and the pressure gate still applying (#884).
       if (lane && !pressed) {
         const now = new Date(clock.now()).toISOString();
-        // Only a budget that weighs memory lets an aged waiter wait on memory (fitsBudget).
+        // An aged waiter gates slot-free admission only while it waits on memory (#926): a
+        // slot-free check takes memory alone, so only that can starve it. Deliberately, an
+        // aged waiter blocked by slots or units does not gate it (a slot-free run takes none
+        // of either), and neither does one whose charge fits the free memory; the slots and
+        // units modes never weigh memory, so nothing gates there. Under pressure nothing is
+        // admitted without a slot at all (`pressed` above).
         const agedBytes =
           weighted && budget.mode !== "units"
             ? waiters
@@ -2185,7 +2197,7 @@ export function describeHolder(holder: LeaseHolder, now = Date.now()): string {
   if (holder.kind === "pressure") return holder.check;
   const age = formatWait(now - Date.parse(holder.startedAt));
   if (holder.kind)
-    return `${holder.kind} ${holder.check}${holder.ref ? ` (${holder.ref})` : ""}, pid ${holder.pid}, ${formatBytes(holder.bytes ?? 0)}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}`;
+    return `${holder.kind} ${holder.check}${holder.ref ? ` (${holder.ref})` : ""}, pid ${holder.pid}, ${formatBytes(holder.bytes ?? 0)}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}${holder.stuck ? `, stuck? (${holder.stuck})` : ""}`;
   return `${holder.check}${holder.lane ? ` (${holder.lane})` : ""}, pid ${holder.pid}${holder.session ? `, session ${holder.session}` : ""}, ${age}, ${holder.cwd}${holder.stuck ? `, stuck? (${holder.stuck})` : ""}`;
 }
 

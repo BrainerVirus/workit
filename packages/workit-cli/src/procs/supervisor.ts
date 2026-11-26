@@ -151,6 +151,8 @@ export async function supervise(spec: SupervisorSpec, env: NodeJS.ProcessEnv): P
         session: spec.session,
         ref: spec.id,
         budget,
+        // The checkout's maxHold, as its checks' acquire uses (#926): never reap a slot-free check early.
+        maxHoldMs: resolveResourceSettings(spec.sources, hostShape()).settings.maxHoldMs,
       });
       if (!admitted.ok) {
         updateExtra(env, spec.id, {
