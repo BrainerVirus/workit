@@ -201,14 +201,29 @@ const opaque = (rest: readonly string[], scan: Scan, assigns: boolean): void => 
     scan.hit ??= hit.split("=")[0] ?? null;
 };
 
-/** The script `su -c "…"`, `runuser -c "…"` or `script -c "…"` runs, read like a `bash -c` script. */
+/** Short options of `su`, `runuser` and util-linux `script` that take a value, `c` among them. */
+const LOGIN_VALUED: Record<string, RegExp> = {
+  su: /[sgGwc]/u,
+  runuser: /[sgGwuc]/u,
+  script: /[cEIOBTmot]/u,
+};
+
+/**
+ * The script `su -c "…"`, `runuser -lc "…"` or `script -qc "…"` runs, read like a `bash -c`
+ * script. A short-option cluster reads as getopt reads it: its first option that takes a value
+ * ends it, and when that option is `c`, the rest of the cluster or else the next word is the script.
+ */
 const loginScript = (words: readonly string[]): string | null => {
   const at = words.findIndex((word) => /^(?:su|runuser|script)$/u.test(base(word)));
   if (at < 0) return null;
+  const valued = LOGIN_VALUED[base(words[at])] ?? /c/u;
   for (let index = at + 1; index < words.length; index += 1) {
     const word = words[index] ?? "";
-    if (word === "-c" || word === "--command") return words[index + 1] ?? null;
+    if (word === "--command") return words[index + 1] ?? null;
     if (word.startsWith("--command=")) return word.slice("--command=".length);
+    if (!/^-[^-]/u.test(word)) continue;
+    const ends = word.slice(1).search(valued) + 1;
+    if (ends > 0 && word[ends] === "c") return word.slice(ends + 1) || (words[index + 1] ?? null);
   }
   return null;
 };

@@ -114,6 +114,13 @@ const REFUSED = [
   "su me -c 'WORKIT_AGENT_ID=x workit check test'",
   "script -q -c 'unset WORKIT_HOST; workit check test' /dev/null",
   "runuser --command='export WORKIT_HOST=; workit check test' me",
+  // Short options glued into one cluster that ends in `c` (#883 follow-up).
+  'script -qc "env -u WORKIT_HOST workit check test" /dev/null',
+  "script -fqc 'unset WORKIT_HOST; workit check test' /dev/null",
+  "script -qec 'WORKIT_AGENT_ID=x workit check test' /dev/null",
+  "script -qc'env -u WORKIT_HOST workit check test' /dev/null",
+  "su -lc 'env -u WORKIT_HOST workit check test' me",
+  "runuser -lc 'export WORKIT_HOST=; workit check test' me",
 ];
 
 test.each(REFUSED)("`%s` is denied for a subagent and for the lead", (command) => {
@@ -157,6 +164,9 @@ test.each([
   ["grep -rn env src; workit check test"],
   ["su -c 'ls' me"],
   ["script -q -c 'workit check test' /dev/null"],
+  ['script -qc "ls" /dev/null'],
+  ["script -qc 'workit check test' /dev/null"],
+  ["su -lc 'ls' me"],
 ])("`%s` runs: it reads or names an identity variable without changing it", (command) => {
   expect(identityDenied(shellPre(command, "v1"))).toBe(false);
 });
