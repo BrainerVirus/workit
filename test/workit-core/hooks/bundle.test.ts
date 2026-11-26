@@ -114,16 +114,23 @@ const HOOK_ENTRIES = [
 // copy fallback and the O_EXCL move lock), core run is 613,067 B: #892 adds 4,650 B over #950's 608,417 B.
 // Nothing trims without dropping the move's safety (resolveStore runs in every hook, so the move ships
 // in the hook bundle); one ceiling for both changes, that plus 2 KiB.
-const BUDGET = 615_115;
+// hook-slim (2026-11-25, Bun 1.4.5, at 33b0d00b): the hook-loaded schemas (workspaces, task contract,
+// store lock) moved from classic zod to zod/mini (core/zod-mini.ts), so classic's schema classes and the
+// JSON Schema emitter they import leave every hook bundle, and the operation request schemas, built at
+// load, moved from task-contract.ts to core/operations.ts, which no hook loads. Core run 613,480 B ->
+// 553,461 B (Claude Code 606,835 -> 546,812, Codex 595,155 -> 535,135, Cursor 594,549 -> 534,529);
+// the ceiling is core run plus 2 KiB. A hook bundle must not load classic zod again (FORBIDDEN below).
+const BUDGET = 555_509;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
 const sizeCheckApplies = Bun.version === PINNED_BUN;
-// The task store's write side: hooks only read (core/task-read.ts, #807).
+// The task store's write side: hooks only read (core/task-read.ts, #807). Classic zod and its
+// JSON Schema emitter: hook-loaded schemas import zod from core/zod-mini.ts.
 const FORBIDDEN =
-  /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$|\/core\/task-store\.ts$/;
+  /\/(doctor|setup|setup-state|uninstall|host-install|init)\.ts$|\/src\/core\.ts$|\/core\/task-store\.ts$|\/zod\/v4\/(classic\/|core\/(to-json-schema|json-schema-processors|json-schema-generator)\.js$)/;
 
-test("a hook bundle loads no doctor/setup modules, the core barrel or the task store's write side, within its size budget", () => {
+test("a hook bundle loads no doctor/setup modules, the core barrel, the task store's write side or classic zod, within its size budget", () => {
   const out = mkdtempSync(path.join(tmpdir(), "workit-hook-bundle-"));
   try {
     for (const [index, entry] of HOOK_ENTRIES.entries()) {

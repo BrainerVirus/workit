@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import * as z from "zod";
+import * as z from "zod/mini";
 import { main } from "@/packages/workit-cli/src/main";
 import { boundedOutput, countWarnings } from "@/packages/workit-cli/src/verbs/check";
 import { TaskStore, WorkitCore } from "@/packages/workit-core/src/core";
@@ -484,8 +484,8 @@ test("an older reader that does not know the observation fails closed instead of
   expect((await run(root, ["check", "test", "--json"])).code).toBe(0);
   const record = rawRecordOf(root, taskId);
   // The reader before S9b: same task schema, evidence without `observation`.
-  const older = taskRecordSchema.extend({
-    evidence: z.array(entrySchema(evidenceSchema.omit({ observation: true }))),
+  const older = z.extend(taskRecordSchema, {
+    evidence: z.array(entrySchema(z.omit(evidenceSchema, { observation: true }))),
   });
   expect(parseStoredRecord(older, record)).toMatchObject({
     success: false,

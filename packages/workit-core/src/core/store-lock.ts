@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { hostname } from "node:os";
 import path from "node:path";
-import * as z from "zod";
+import * as z from "./zod-mini";
 import { canonicalJson } from "./task-contract";
 import { checkoutSlug, resolveStore } from "../store/paths";
 
@@ -22,16 +22,15 @@ export type MetadataLock = {
   nonce: string;
 };
 
-const metadataLockSchema = z
-  .object({
-    pid: z.number().int().nonnegative().safe(),
-    processStart: z.string().nullable(),
-    host: z.string().min(1),
-    nonce: z.string().min(1),
-    /** Written by ≤4.x managed external actions; read and ignored (D17). */
-    externalAction: z.literal(true).optional(),
-  })
-  .strict();
+const metadataLockSchema = z.strictObject({
+  // Classic zod's .int().nonnegative().safe(): .safe() repeats the int check.
+  pid: z.number().check(z.int(), z.nonnegative(), z.int()),
+  processStart: z.nullable(z.string()),
+  host: z.string().check(z.minLength(1)),
+  nonce: z.string().check(z.minLength(1)),
+  /** Written by ≤4.x managed external actions; read and ignored (D17). */
+  externalAction: z.optional(z.literal(true)),
+});
 
 /** A lock from another host cannot be checked for liveness; trust it this long. */
 export const FOREIGN_LOCK_TTL_MS = 10 * 60_000;

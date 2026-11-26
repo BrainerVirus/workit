@@ -9,7 +9,7 @@ import {
   operationSchemas,
 } from "@/packages/workit-core/src/core";
 import { actionKeys, exampleOperation } from "@/packages/workit-core/src/core/operation-input";
-import { OPERATION_ACTIONS } from "@/packages/workit-core/src/core/task-contract";
+import { OPERATION_ACTIONS } from "@/packages/workit-core/src/core/operations";
 
 const propertyDepth = (node: unknown): number => {
   if (!node || typeof node !== "object") return 0;

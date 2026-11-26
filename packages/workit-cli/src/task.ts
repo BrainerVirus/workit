@@ -39,7 +39,8 @@ import {
   type ResolveDisposition,
 } from "@workit-dev/core/src/core/finding-evidence";
 import { findingIssueText } from "@workit-dev/core/src/core/finding-queue";
-import { parseOperation, type ErrorCode, type Ref } from "@workit-dev/core/src/core/task-contract";
+import { type ErrorCode, type Ref } from "@workit-dev/core/src/core/task-contract";
+import { parseOperation } from "@workit-dev/core/src/core/operations";
 import { commentOnIssue, createIssue, issueTarget } from "@workit-dev/core/src/forge/issue-ops";
 import type { ForgeResult } from "@workit-dev/core/src/forge/types";
 import { actorFromEnv } from "@workit-dev/core/src/ledger";

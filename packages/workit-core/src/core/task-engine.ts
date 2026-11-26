@@ -14,7 +14,6 @@ import {
   judgmentSchema,
   legacyAssessmentSchema,
   newId,
-  parseOperation,
   resolveIdRef,
   rewriteRecordRefs,
   success,
@@ -46,6 +45,7 @@ import {
   scopeCovers as bindingCovers,
   scopeGap,
 } from "./task-contract";
+import { parseOperation } from "./operations";
 import { diffPolicy, resolvePolicy } from "./policy-resolver";
 import { explainInvalidOperation, normalizeOperationInput } from "./operation-input";
 import { acceptedEvidenceText, type ResolveDisposition } from "./finding-evidence";

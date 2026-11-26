@@ -28,6 +28,7 @@ import {
   workspaceConfigSchema,
   workspacesFileSchema,
 } from "./workspaces";
+import { described } from "./zod-mini";
 
 export const CONFIG_SCHEMA_FILES = [
   "workspaces.json",
@@ -145,7 +146,7 @@ const ROLES_EDITOR = closed(
   ),
 );
 const MODELS_EDITOR = closed({
-  roles: { ...ROLES_EDITOR, description: modelRoles.description },
+  roles: { ...ROLES_EDITOR, description: z.globalRegistry.get(modelRoles)?.description },
   lead: {
     ...ref("roleModel"),
     description:
@@ -227,14 +228,14 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
     },
   ],
   [releaseTrackSchema.shape.releaseNotes, enumOf(RELEASE_NOTES_MODES)],
-  [entry.vcs.unwrap().shape.host, nonBlankString],
-  [entry.issues.unwrap().shape.relation, enumOf(["closes", "refs"])],
-  [entry.issues.unwrap().shape.repo, string("owner/name")],
-  [entry.issues.unwrap().shape.host, nonBlankString],
-  [entry.fanout.unwrap().shape.tierModels, perTier(ref("tierModel"))],
-  [entry.fanout.unwrap().shape.deps, enumOf(FANOUT_DEPS_MODES)],
+  [entry.vcs._zod.def.innerType.shape.host, nonBlankString],
+  [entry.issues._zod.def.innerType.shape.relation, enumOf(["closes", "refs"])],
+  [entry.issues._zod.def.innerType.shape.repo, string("owner/name")],
+  [entry.issues._zod.def.innerType.shape.host, nonBlankString],
+  [entry.fanout._zod.def.innerType.shape.tierModels, perTier(ref("tierModel"))],
+  [entry.fanout._zod.def.innerType.shape.deps, enumOf(FANOUT_DEPS_MODES)],
   [
-    entry.fanout.unwrap().shape.installTimeout,
+    entry.fanout._zod.def.innerType.shape.installTimeout,
     {
       type: "string",
       // What parseDuration (duration.ts) reads: `90s`, `10m`, `1h30m`, `45 minutes`, bare seconds.
@@ -242,7 +243,7 @@ const EDITOR_DEFINITIONS = new Map<unknown, JsonSchema>([
     },
   ],
   [modelRoles, ROLES_EDITOR],
-  ...[entry.models.unwrap(), workspacesFileSchema.shape.models.unwrap()].map(
+  ...[entry.models._zod.def.innerType, workspacesFileSchema.shape.models._zod.def.innerType].map(
     (models): [unknown, JsonSchema] => [models, MODELS_EDITOR],
   ),
   [
@@ -295,7 +296,8 @@ const configFileSchema = z
     localeOptions: z.array(z.string()).optional().describe("The locales the setup wizard offers."),
     branchPolicy: z
       .object({
-        preset: branchPreset.describe(
+        preset: described(
+          branchPreset,
           "The branch model: gitflow, github-flow, trunk-based or custom.",
         ),
         allowed: z
@@ -309,7 +311,7 @@ const configFileSchema = z
       .describe("The global branch policy; a workspace's `branchPolicy` overrides it."),
     commitPolicy: z
       .object({
-        preset: commitPreset.describe("The commit message flavor, e.g. conventional."),
+        preset: described(commitPreset, "The commit message flavor, e.g. conventional."),
         pattern: z
           .string()
           .optional()
@@ -410,11 +412,11 @@ const youtrackFileSchema = z
 
 /** Objects whose unknown keys stay allowed in the closed files' editor schemas. */
 const OPEN_OBJECTS = new Set<unknown>([
-  entry.branchPolicy.unwrap().shape.prefixes.unwrap()._zod.def,
-  releaseTrackSchema.shape.naming.unwrap()._zod.def,
+  entry.branchPolicy._zod.def.innerType.shape.prefixes._zod.def.innerType._zod.def,
+  releaseTrackSchema.shape.naming._zod.def.innerType._zod.def,
 ]);
 
-const SOURCES: Record<ConfigSchemaFile, { schema: z.ZodType; title: string; open?: true }> = {
+const SOURCES: Record<ConfigSchemaFile, { schema: z.core.$ZodType; title: string; open?: true }> = {
   "workspaces.json": {
     schema: workspacesFileSchema,
     title: "Workit workspaces (workspaces.json in the Workit config dir)",
@@ -440,7 +442,7 @@ const PRESET_ENUMS = new Map<unknown, readonly string[]>([
   [commitPreset._zod.def, COMMIT_PRESETS],
 ]);
 const EDITOR_BY_DEF = new Map(
-  [...EDITOR_DEFINITIONS].map(([schema, json]) => [(schema as z.ZodType)._zod.def, json]),
+  [...EDITOR_DEFINITIONS].map(([schema, json]) => [(schema as z.core.$ZodType)._zod.def, json]),
 );
 
 const replace = (target: JsonSchema, next: JsonSchema): void => {
