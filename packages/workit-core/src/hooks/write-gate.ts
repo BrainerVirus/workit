@@ -141,7 +141,7 @@ const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
  * in its option letters its one operand (`taskset ff`, `timeout inf`); with `assigns`, past
  * `NAME=value` words too (`sudo X=1`).
  */
-const pastOptions = (
+export const pastOptions = (
   words: readonly string[],
   at: number,
   takes: string,
@@ -299,7 +299,7 @@ const editsOf = (input: string[]): string[] | null => {
  * Wrappers that run their operand as the command, with the option letters that take a value
  * (`#`: one operand comes before the command).
  */
-const WRAPPERS: Record<string, string> = {
+export const WRAPPERS: Record<string, string> = {
   sudo: "ugCDhpRrTtU",
   doas: "uC",
   env: "uCS",

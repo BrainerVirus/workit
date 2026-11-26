@@ -80,6 +80,24 @@ const REFUSED = [
   "env -Q workit check test",
   "unset $V; workit check test",
   "export $V=x; workit check test",
+  // Round 6 (verdict mwxdl7xe): `--` then assignments, `$` in -S, env.exe, wrappers, opaque wrappers.
+  "env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -- WORKIT_HOST= WORKIT_AGENT_ID=forged workit check test",
+  'env -S "$X workit check test"',
+  "X='-u WORKIT_HOST'; env -u CLAUDECODE -S \"$X WORKIT_AGENT_ID=forged workit check test\"",
+  "env -S 'workit check `id`'",
+  "env.exe -u WORKIT_HOST workit check test",
+  "/usr/bin/env.exe WORKIT_AGENT_ID=x workit check test",
+  "'C:\\Git\\usr\\bin\\env.exe' WORKIT_AGENT_ID=x workit check test",
+  "setsid env -u WORKIT_HOST workit check test",
+  "ionice -c3 env -u WORKIT_HOST workit check test",
+  "stdbuf -o0 env -u WORKIT_HOST workit check test",
+  "chrt -f 1 env -u WORKIT_HOST workit check test",
+  "taskset -c 0-2 env -u WORKIT_HOST workit check test",
+  "sudo WORKIT_AGENT_ID=x workit check test",
+  "watch env FOO=1 workit check test",
+  "strace -f env -i workit check test",
+  "chroot / env FOO=1 workit check test",
+  "env FOO=$(date) workit check test",
 ];
 
 test.each(REFUSED)("`%s` is denied for a subagent and for the lead", (command) => {
@@ -111,6 +129,12 @@ test.each([
   ["env --bogus-opt ls"],
   ["unset $V; ls"],
   ["echo workit-notes; env $X ls"],
+  ["env -- FOO=1 ls"],
+  ["env -S 'FOO=1 ls'"],
+  ["setsid env FOO=1 ls"],
+  ["watch env FOO=1 ls"],
+  ["strace -f workit check test"],
+  ["env.exe FOO=1 bun test"],
 ])("`%s` runs: it reads or names an identity variable without changing it", (command) => {
   expect(identityDenied(shellPre(command, "v1"))).toBe(false);
 });

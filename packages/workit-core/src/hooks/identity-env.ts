@@ -3,16 +3,19 @@
 // WORKIT_HOST and WORKIT_SESSION_ID, the agent stamp's WORKIT_AGENT_ID): an
 // agent that sets, unsets or empties one could make the CLI read another
 // actor, or no host at all, and take a forged agent id. A guard against
-// careless changes, not a sandbox: it reads a prefix assignment, `env` (its
-// options by arity, `-S` lines, `-i`), the declare builtins (`export`,
+// careless changes, not a sandbox: it reads a prefix assignment, `env` or
+// `env.exe` (its options by arity, `-S` lines, `-i`, the assignments after
+// `--`) behind write-gate.ts's wrappers, the declare builtins (`export`,
 // `unset`, `declare`, `typeset`, `local`, `readonly`), `bash -c` scripts and
 // PowerShell `$env:NAME`; in a command that runs `workit` it also refuses
-// what it cannot read there (an unknown `env` option, an expanded argument,
-// a cleared environment). It does not read `read`, `printf -v`, `${X:=}`,
-// `for X in`, `source`, an interpreter or a script file (hosts.md#host-parity).
+// what it cannot read there (an unknown `env` option, an expanded argument or
+// `-S` line, a cleared environment, an env change inside a wrapper it does
+// not follow). It does not read `read`, `printf -v`, `${X:=}`, `for X in`,
+// `source`, an interpreter, a script file or control flow (hosts.md#host-parity).
 // Words, not text, so a `grep WORKIT_HOST` or a quoted mention passes.
 import { shellScript } from "./delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./shell-words";
+import { pastOptions, WRAPPERS } from "./write-gate";
 
 const NAMES = "WORKIT_(?:AGENT_ID|HOST|SESSION_ID|SESSION_TOKEN)";
 const IDENTITY = new RegExp(`^${NAMES}$`, "u");
@@ -22,16 +25,17 @@ const POWERSHELL = new RegExp(
 );
 /** Builtins that export, unset or declare the names after them. */
 const DECLARES = new Set(["export", "unset", "declare", "typeset", "local", "readonly"]);
-/** Commands that run the rest of their words (their options skipped; `timeout` takes a duration). */
-const WRAPPERS = new Set([
-  "sudo",
-  "nohup",
-  "command",
-  "builtin",
-  "exec",
-  "timeout",
-  "nice",
-  "time",
+/** Wrappers Workit does not follow into: any env change inside one is unreadable to it. */
+const OPAQUE = new Set([
+  "watch",
+  "strace",
+  "chroot",
+  "flock",
+  "ssh",
+  "su",
+  "runuser",
+  "script",
+  "parallel",
 ]);
 /** `env` short options that take a value (GNU -u -C -S -a, BSD -P), and those that take none. */
 const ENV_VALUED = new Set(["u", "C", "S", "a", "P"]);
@@ -40,7 +44,9 @@ const ENV_LONG_VALUED = new Set(["--unset", "--chdir", "--split-string", "--argv
 const ENV_LONG_FLAGS =
   /^--(?:ignore-environment|null|debug|(?:block|default|ignore)-signal(?:=.*)?)$/u;
 
-const base = (word: string | undefined): string => word?.split(/[\\/]/u).at(-1) ?? "";
+/** A command's name: its last path part, without a Windows `.exe` (`C:\\Git\\usr\\bin\\env.exe`). */
+const base = (word: string | undefined): string =>
+  (word?.split(/[\\/]/u).at(-1) ?? "").replace(/\.exe$/iu, "");
 const named = (word: string | undefined): boolean => IDENTITY.test(word?.split("=")[0] ?? "");
 const isWorkit = (word: string | undefined): boolean => /^workit(?:-cli)?$/u.test(base(word));
 
@@ -68,17 +74,24 @@ const scanEnv = (
   const unset = (name: string | undefined) => {
     if (named(name)) scan.hit ??= name ?? null;
   };
-  /** `-S line`: the line is more of env's arguments (env expands `${…}` in it itself). */
-  const split = (line: string | undefined, rest: number) => {
-    if (line === undefined || line.includes("$") || depth >= 4) return risky(UNREADABLE);
-    let tokens: string[] = [];
+  /** `-S line`: the line is more of env's arguments (a `$` or backtick in it is never read). */
+  const split = (line: string | undefined, rest: number, built: boolean) => {
+    if (line === undefined || depth >= 4) return risky(UNREADABLE);
+    if (built || /[$`]/u.test(line)) risky(UNREADABLE);
+    const tokens: string[] = [];
+    const expanded = new Set<number>();
     try {
-      tokens = segmentsOf(line).flatMap((segment) => segment.words);
+      for (const segment of segmentsOf(line)) {
+        for (const index of segment.expands ?? []) expanded.add(tokens.length + index);
+        tokens.push(...segment.words);
+      }
     } catch {
       return risky(UNREADABLE);
     }
-    scanEnv([...tokens, ...words.slice(rest)], 0, new Set(), scan, depth + 1);
+    scanEnv([...tokens, ...words.slice(rest)], 0, expanded, scan, depth + 1);
   };
+  // Past `--` only assignments and the command follow.
+  let options = true;
   for (let index = at; index < words.length; index += 1) {
     const word = words[index] ?? "";
     // An argument the shell builds may be any option, assignment or the command.
@@ -86,31 +99,39 @@ const scanEnv = (
       risky(UNREADABLE);
       continue;
     }
-    if (word === "--") return commandAt(words.slice(index + 1), scan);
-    if (word === "-") {
+    if (options && word === "--") {
+      options = false;
+      continue;
+    }
+    if (options && word === "-") {
       risky("env -i");
       continue;
     }
-    if (word.startsWith("--")) {
+    if (options && word.startsWith("--")) {
       const [name = "", value] = word.split(/=(.*)/su);
       if (name === "--ignore-environment") risky("env -i");
       else if (name === "--unset") unset(value ?? words[(index += 1)]);
       else if (name === "--split-string")
-        return split(value ?? words[index + 1], index + (value === undefined ? 2 : 1));
+        return split(
+          value ?? words[index + 1],
+          index + (value === undefined ? 2 : 1),
+          expands.has(index + (value === undefined ? 1 : 0)),
+        );
       else if (ENV_LONG_VALUED.has(name)) index += value === undefined ? 1 : 0;
       else if (!ENV_LONG_FLAGS.test(word)) risky(UNREADABLE);
       continue;
     }
-    if (word.startsWith("-") && word.length > 1) {
+    if (options && word.startsWith("-") && word.length > 1) {
       for (let at2 = 1; at2 < word.length; at2 += 1) {
         const letter = word[at2] ?? "";
         if (letter === "i") risky("env -i");
         else if (ENV_FLAGS.has(letter)) continue;
         else if (ENV_VALUED.has(letter)) {
           const glued = word.slice(at2 + 1);
-          const value = glued || words[(index += 1)];
+          if (!glued) index += 1;
+          const value = glued || words[index];
           if (letter === "u") unset(value);
-          if (letter === "S") return split(value, index + 1);
+          if (letter === "S") return split(value, index + 1, expands.has(index));
           break;
         } else {
           risky(UNREADABLE);
@@ -127,7 +148,7 @@ const scanEnv = (
   }
 };
 
-/** The command word of `words` (past wrappers), and `env`'s arguments when it is env. */
+/** The command word of `words` (past wrappers and their assignments), and `env`'s arguments when it is env. */
 const commandAt = (
   words: readonly string[],
   scan: Scan,
@@ -136,12 +157,26 @@ const commandAt = (
 ): void => {
   let index = from;
   while (index < words.length) {
-    const name = base(words[index]);
+    while (/^[A-Za-z_]\w*=/u.test(words[index] ?? "")) {
+      if (named(words[index])) scan.hit ??= words[index]?.split("=")[0] ?? null;
+      index += 1;
+    }
+    const name = base(words[index]).toLowerCase();
     if (name === "env") return scanEnv(words, index + 1, expands, scan, 0);
-    if (!WRAPPERS.has(name)) break;
-    index += 1;
-    while (words[index]?.startsWith("-")) index += 1;
-    if (name === "timeout" && words[index] !== undefined) index += 1;
+    if (OPAQUE.has(name)) {
+      const rest = words.slice(index + 1);
+      if (rest.some(isWorkit)) scan.runs = true;
+      if (
+        rest.some(
+          (word) => base(word) === "env" || DECLARES.has(word) || /^[A-Za-z_]\w*=/u.test(word),
+        )
+      )
+        scan.risky ??= UNREADABLE;
+      return;
+    }
+    const takes = WRAPPERS[name];
+    if (takes === undefined) break;
+    index = pastOptions(words, index + 1, takes);
   }
   if (isWorkit(words[index])) scan.runs = true;
 };
