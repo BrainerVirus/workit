@@ -46,6 +46,7 @@ import {
   type RawInvocation,
 } from "./raw-git";
 import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
+import { powershellTextWriter, windowsStatementWriter } from "./windows-reads";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -748,8 +749,8 @@ const shellScript = (words: readonly string[]): string | null => {
 /** A cmd variable reference: `%X%`, or `!X!` under delayed expansion. */
 const CMD_VAR = /%[^%\s]+%|![^!\s]+!/;
 
-/** xargs options that take the next word as their value. */
-const XARGS_VALUE = /^-[InLPdsEa]$/;
+/** xargs options that take the next word as their value (`-J` and `-R` are BSD's). */
+const XARGS_VALUE = /^-[InLPdsEaJR]$/;
 
 /** The command `xargs` (or `find -exec`) runs with `{}` filled in by a path. */
 const runsWriter = (words: readonly string[]): boolean => {
@@ -760,6 +761,8 @@ const runsWriter = (words: readonly string[]): boolean => {
       .map((word) => (word.includes("{}") ? "eval" : word)),
     "eval",
   ];
+  // A command `{}` or stdin names (`find -exec {} f`, `xargs env`): any writer.
+  if (pastLead(filled)[0] === "eval") return true;
   const edits = editsOf(filled);
   return edits === null || edits.length > 0 || opaqueWrites(filled) !== null;
 };
@@ -785,9 +788,14 @@ const opaqueWrites = (
         words[at] === "-I"
           ? (words[at + 1] ?? token)
           : (/^-[Ii](.+)|^--replace=(.+)/s.exec(words[at])?.slice(1).join("") ?? token);
-    // A command named by stdin (`echo touch | xargs -I{} {} f`) may be any writer.
+    // A command named by stdin (`echo touch | xargs -I{} {} f`, BSD's `xargs -J % % f`) may be any
+    // writer; with no command, xargs echoes.
     const named = pastLead(words.slice(at))[0] ?? "";
-    return named.includes(token) || named.includes("{}") || runsWriter(words.slice(at))
+    if (at >= words.length) return null;
+    return named.includes(token) ||
+      named.includes("{}") ||
+      words.slice(1, at).some((word) => word.startsWith("-J")) ||
+      runsWriter(words.slice(at))
       ? ["."]
       : null;
   }
@@ -802,6 +810,8 @@ const opaqueWrites = (
     return ["."];
   // `set X=…&& mklink /J %X% …`: a link whose name or target is a cmd variable.
   if (name === "mklink" && args.some((arg) => CMD_VAR.test(arg))) return ["."];
+  // `cmd` with no `/c` or `/k` runs the script on its stdin (`echo del x | cmd`).
+  if (name === "cmd" && cmdScript(words) === null && !args.includes("/?")) return ["."];
   const files = operands(args);
   const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
   const listed = (named: string[]) => (named.length ? named : ["."]);
@@ -1853,8 +1863,12 @@ const segmentTargets = (
   depth = 0,
   strict: Strict = false,
   inherited: ReadonlyMap<string, string> = new Map(),
+  inCmd = false,
 ): string[] => {
   const targets: string[] = [];
+  // Confined, a PowerShell or `cmd /c` statement passes only as a known read (windows-reads.ts).
+  const windowsReads = strict === true && dialect === "powershell";
+  const textWriter = windowsReads && !inCmd ? powershellTextWriter(command) : null;
   // Scripts this command writes from a heredoc (`cat > t.sh <<'EOF'`), by path.
   const written = new Map<string, string>();
   let dir: string | undefined = cwd;
@@ -1950,6 +1964,18 @@ const segmentTargets = (
       if (saved) ({ dir, stack, vars, loops } = saved);
       continue;
     }
+    const unreadable =
+      windowsReads && dir !== undefined && segment.words.length > 0
+        ? windowsStatementWriter(
+            segment,
+            inCmd,
+            textWriter,
+            segments[segments.indexOf(segment) - 1],
+            segments[segments.indexOf(segment) + 1],
+          )
+        : null;
+    if (unreadable !== null && dir !== undefined)
+      targets.push(placeholderIn(dir, `${OPAQUE_TARGET}${encodeURIComponent(unreadable)}`));
     const body = commandWords(segment.words);
     // The segment whose output this one reads (`a | b`).
     const before = segments[segments.indexOf(segment) - 1];
@@ -2055,8 +2081,11 @@ const segmentTargets = (
     const windows = strict && depth < 4 ? windowsScript(words, segment.stdin?.join("\n")) : null;
     // A cmd target spelled `%X%` or `!X!` (`set X=…&& mklink /J %X% …`) is a value Workit does not read.
     const cmd = /^cmd(?:\.exe)?$/.test(commandName(pastLead(words)[0] ?? ""));
+    // `pwsh -c "$S"`: a script the shell expands first is text Workit does not read.
+    if (windows !== null && dir !== undefined && dialect === "posix" && segment.expands?.length)
+      targets.push(placeholderIn(dir, `${OPAQUE_TARGET}${commandName(pastLead(words)[0] ?? "")}`));
     if (windows !== null && dir !== undefined)
-      for (const file of segmentTargets(dir, windows, "powershell", depth + 1, strict, vars))
+      for (const file of segmentTargets(dir, windows, "powershell", depth + 1, strict, vars, cmd))
         targets.push(cmd && CMD_VAR.test(file) ? placeholderIn(dir, `${OPAQUE_TARGET}cmd`) : file);
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
     const bare = strict && depth < 4 ? unwrapped(words) : null;
@@ -2310,7 +2339,12 @@ const segmentTargets = (
       if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
     }
     for (const file of [...segment.redirects, ...(edits ?? [])])
-      if (!/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file)) targets.push(...atAll(file));
+      // PowerShell's `$null` and cmd's `nul` discard what is written to them.
+      if (
+        !/^\/dev\/(?:null|stdout|stderr|tty)$/.test(file) &&
+        !(dialect === "powershell" && /^(?:\$null|nul)$/i.test(file))
+      )
+        targets.push(...atAll(file));
     if (dir !== undefined)
       for (const invocation of workitInvocations(body.map(quoteWord).join(" "), "posix")) {
         const { at: runsIn, args } = workitCwd(dir, invocation, atAll);
