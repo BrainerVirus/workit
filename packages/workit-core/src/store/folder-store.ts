@@ -112,6 +112,8 @@ type FolderMigration = {
 export const folderStoreIo = {
   rename: (from: string, to: string) => fs.renameSync(from, to),
   copyFile: (from: string, to: string) => fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL),
+  /** Between judging a lock stale and taking it over (a test widens the race here). */
+  judgedStale: () => {},
 };
 
 let tempSeq = 0;
@@ -204,44 +206,85 @@ const LOCK_WAIT_MS = 250;
 
 const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/** The lock holder is gone (a dead pid) or past LOCK_STALE_MS. */
-const staleLock = (lock: string): boolean => {
+/** What staleLock judged: the lock's bytes (pid and nonce) and mtime. */
+type StaleLock = { text: string; mtimeMs: number };
+
+const readLock = (lock: string): string => fs.readFileSync(lock, "utf8");
+
+/** The lock holder is gone (a dead pid) or past LOCK_STALE_MS: what it judged, else null. */
+const staleLock = (lock: string): StaleLock | null => {
   try {
-    const stat = fs.statSync(lock);
-    if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) return true;
-    const pid = Number(fs.readFileSync(lock, "utf8").trim());
-    if (!Number.isInteger(pid) || pid <= 0) return false;
+    const { mtimeMs } = fs.statSync(lock);
+    const text = readLock(lock);
+    if (Date.now() - mtimeMs > LOCK_STALE_MS) return { text, mtimeMs };
+    const pid = Number(text.trim().split(/\s+/u)[0]);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
     try {
       process.kill(pid, 0);
-      return false;
+      return null;
     } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "ESRCH";
+      return (error as NodeJS.ErrnoException).code === "ESRCH" ? { text, mtimeMs } : null;
     }
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Take over the stale `lock` staleLock judged, atomically: rename it aside
+ * (one mover wins; a loser gets ENOENT), then check the renamed file is the
+ * one judged. A fresh lock swapped in meanwhile is linked back, never over a
+ * lock created since, and the takeover fails. True when the stale one is gone.
+ */
+const removeStaleLock = (lock: string, judged: StaleLock): boolean => {
+  const aside = `${lock}.stale-${process.pid}-${crypto.randomUUID()}`;
+  try {
+    fs.renameSync(lock, aside);
   } catch {
     return false;
   }
+  let same = false;
+  try {
+    same = fs.statSync(aside).mtimeMs === judged.mtimeMs && readLock(aside) === judged.text;
+  } catch {}
+  // Accepted gap: until the link back, a third mover may take the lock beside its
+  // holder; each move is no-clobber and atomic, so the worst case is a kept entry.
+  if (!same)
+    try {
+      fs.linkSync(aside, lock);
+    } catch {}
+  fs.rmSync(aside, { force: true });
+  return same;
 };
 
 /**
  * Take `<target>.lock` (O_EXCL) for one move: a short wait for a live holder,
  * a stale one is taken over. Null when it stays busy: the caller skips the
- * move this time, so a hook is never held up for long.
+ * move this time, so a hook is never held up for long. The release removes
+ * the lock only while it still holds this mover's nonce, so a mover whose
+ * lock was taken over as stale leaves the new holder's lock alone.
  */
-const takeMoveLock = (target: string): (() => void) | null => {
+export const takeMoveLock = (target: string): (() => void) | null => {
   const lock = `${target}.lock`;
+  const mine = `${process.pid} ${crypto.randomUUID()}\n`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       const fd = fs.openSync(lock, "wx", 0o600);
-      fs.writeSync(fd, `${process.pid}\n`);
+      fs.writeSync(fd, mine);
       fs.closeSync(fd);
-      return () => fs.rmSync(lock, { force: true });
+      return () => {
+        try {
+          if (readLock(lock) === mine) fs.rmSync(lock, { force: true });
+        } catch {}
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") return null;
     }
-    if (staleLock(lock)) {
-      fs.rmSync(lock, { force: true });
-      continue;
+    const stale = staleLock(lock);
+    if (stale) {
+      folderStoreIo.judgedStale();
+      if (removeStaleLock(lock, stale)) continue;
     }
     if (Date.now() >= deadline) return null;
     pause(25);

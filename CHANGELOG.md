@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- two Workit processes moving an old folder store at once can no longer both take over its stale lock; one mover wins and a fresh lock is never removed (#892).
 - `pr merge`'s base-red hint (likely flaky or broken) reads the previous base run of the same workflow, not just any job with the same name, so a second workflow with the same display name no longer swaps flaky and broken (#928).
 - `pr merge`'s changelog-only auto rebase no longer pushes when the base already contains the PR head (the PR landed meanwhile): it puts the branch back at the PR head, pushes nothing and points to `workit pr status`; if the branch cannot be put back it fails with the exact `git reset --keep <head>` to run (#928).
 - `workit git rebase` and `pr merge`'s auto rebase always fetch the base and read it from `refs/remotes/<remote>/<branch>`, so a local branch literally named `origin/main` can no longer become the base (#928).

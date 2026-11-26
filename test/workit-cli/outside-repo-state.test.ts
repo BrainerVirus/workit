@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -24,6 +25,7 @@ import {
   TEST_RUN_REFUSALS,
   folderStoreIo,
   migrateFolderStore,
+  takeMoveLock,
   testRunFolderRefusal,
 } from "@/packages/workit-core/src/store/folder-store";
 import { resolveStore } from "@/packages/workit-core/src/store/paths";
@@ -317,4 +319,133 @@ if (found instanceof Error) throw found;
     if (!["workspace.json", ".gitignore", "checks.json"].includes(rel))
       expect(after[rel], rel).toBe(text);
   expect(existsSync(`${target}.lock`)).toBe(false);
+});
+
+/** A pid no process has: one that ran and exited. */
+const deadPid = (): number => spawnSync(process.execPath, ["-e", "0"]).pid;
+
+/** A lock a dead mover left a minute ago. */
+const staleLockFile = (lock: string) => {
+  writeFileSync(lock, `${deadPid()}\n`);
+  const old = (Date.now() - 60_000) / 1000;
+  utimesSync(lock, old, old);
+};
+
+/** What a takeover left beside the lock (`<lock>.stale-*`). */
+const asides = (lock: string) =>
+  readdirSync(path.dirname(lock)).filter((name) =>
+    name.startsWith(`${path.basename(lock)}.stale-`),
+  );
+
+test("Given a lock a dead mover left, When a mover takes the lock, Then it takes it over, leaves nothing aside, and its release frees it", () => {
+  const target = path.join(tempDir(), "store");
+  const lock = `${target}.lock`;
+  staleLockFile(lock);
+  const release = takeMoveLock(target);
+  expect(release).not.toBeNull();
+  expect(readFileSync(lock, "utf8")).toMatch(new RegExp(`^${process.pid} [0-9a-f-]{36}\\n$`, "u"));
+  expect(asides(lock)).toEqual([]);
+  release!();
+  expect(existsSync(lock)).toBe(false);
+});
+
+test("Given a holder whose lock was taken over as stale, When it releases, Then the new holder's lock stays", () => {
+  const target = path.join(tempDir(), "store");
+  const lock = `${target}.lock`;
+  const release = takeMoveLock(target);
+  expect(release).not.toBeNull();
+  // Another mover judged it stale, took it over and wrote its own lock.
+  rmSync(lock);
+  const theirs = `${process.pid} another-movers-nonce\n`;
+  writeFileSync(lock, theirs);
+  release!();
+  expect(readFileSync(lock, "utf8")).toBe(theirs);
+});
+
+test("Given a stale lock replaced by a fresh one between the judgment and the takeover, Then the fresh lock stays and the mover skips", () => {
+  const target = path.join(tempDir(), "store");
+  const lock = `${target}.lock`;
+  staleLockFile(lock);
+  const real = { ...folderStoreIo };
+  let swaps = 0;
+  // Another mover takes the stale lock over first and writes its own (a live pid: this one).
+  folderStoreIo.judgedStale = () => {
+    swaps += 1;
+    if (swaps > 1) return;
+    rmSync(lock);
+    writeFileSync(lock, `${process.pid}\n`);
+  };
+  let release;
+  try {
+    release = takeMoveLock(target);
+  } finally {
+    Object.assign(folderStoreIo, real);
+  }
+  expect(release).toBeNull();
+  expect(swaps).toBe(1);
+  expect(readFileSync(lock, "utf8")).toBe(`${process.pid}\n`);
+  expect(asides(lock)).toEqual([]);
+});
+
+test("Given two processes that both judge the same lock stale, Then only one holds the lock at a time", async () => {
+  const target = path.join(tempDir(), "store");
+  const lock = `${target}.lock`;
+  staleLockFile(lock);
+  const log = path.join(tempDir(), "holders.log");
+  const go = path.join(tempDir(), "go");
+  const script = path.join(tempDir(), "take.ts");
+  writeFileSync(
+    script,
+    `import { appendFileSync, existsSync } from "node:fs";
+import { folderStoreIo, takeMoveLock } from ${JSON.stringify(path.resolve(import.meta.dir, "../../packages/workit-core/src/store/folder-store.ts"))};
+const [target, log, go, judgedPause] = process.argv.slice(2);
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// Both movers judge the lock stale; the second takes it over after the first has.
+folderStoreIo.judgedStale = () => void pause(Number(judgedPause));
+appendFileSync(log, "ready " + process.pid + "\\n");
+while (!existsSync(go)) {}
+const release = takeMoveLock(target);
+if (release) {
+  appendFileSync(log, "enter " + process.pid + "\\n");
+  pause(200);
+  appendFileSync(log, "exit " + process.pid + "\\n");
+  release();
+} else appendFileSync(log, "skip " + process.pid + "\\n");
+`,
+  );
+  const children = [50, 150].map((judgedPause) =>
+    Bun.spawn([process.execPath, script, target, log, go, String(judgedPause)], {
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    }),
+  );
+  // Go once both are loaded and waiting, so both reach the stale lock together.
+  const ready = () => (existsSync(log) ? readFileSync(log, "utf8").split("ready ").length - 1 : 0);
+  for (let waited = 0; ready() < 2 && waited < 30_000; waited += 20) await Bun.sleep(20);
+  writeFileSync(go, "");
+  const codes = await Promise.all(children.map((child) => child.exited));
+  expect(codes).toEqual([0, 0]);
+  const lines = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => !line.startsWith("ready "));
+  const trace = lines.join("; ");
+  let holder: string | null = null;
+  for (const line of lines) {
+    const [event, pid] = line.split(" ");
+    if (event === "enter") {
+      expect(holder, trace).toBeNull();
+      holder = pid!;
+    } else if (event === "exit") {
+      expect(pid, trace).toBe(holder!);
+      holder = null;
+    }
+  }
+  const entered = lines.filter((line) => line.startsWith("enter ")).length;
+  const skipped = lines.filter((line) => line.startsWith("skip ")).length;
+  expect(entered, trace).toBeGreaterThanOrEqual(1);
+  expect(entered + skipped, trace).toBe(2);
+  expect(existsSync(lock)).toBe(false);
+  expect(asides(lock)).toEqual([]);
 });
