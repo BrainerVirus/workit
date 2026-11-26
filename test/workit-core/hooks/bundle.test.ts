@@ -191,8 +191,11 @@ const HOOK_ENTRIES = [
 // simple command of a compound, unfollowed wrappers named beside an interpreter, NODE_OPTIONS and
 // BUN_OPTIONS, fds and piped stdin, literal substitutions, removal globs, find tests and rsync
 // --delete; hooks/path-glob.ts) takes core run to 585,776 B (+4,418 B; Claude Code 579,133 B,
-// Codex 567,453 B, Cursor 566,847 B). The ceiling is core run plus 2 KiB.
-const BUDGET = 587_824;
+// Codex 567,453 B, Cursor 566,847 B). Round 3 (verdict mwxrd3nu, rebased on #987 at c2ae788a:
+// built command words, loop variables, raw `$(…)`, at/batch, find -i and negated tests, rsync --del)
+// takes it to 587,072 B (+1,296 B; Claude Code 580,429 B, Codex 568,749 B, Cursor 568,143 B). The
+// ceiling is core run plus 2 KiB.
+const BUDGET = 589_120;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
