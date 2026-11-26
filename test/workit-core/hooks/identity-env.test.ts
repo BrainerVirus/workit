@@ -3,7 +3,7 @@
 // so the CLI cannot be made to read no host and take a forged agent id.
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -15,6 +15,7 @@ import {
   type HookInput,
 } from "@/packages/workit-core/src/hooks/index";
 import type { HostDescriptor } from "@/packages/workit-core/src/hooks/descriptor";
+import { identityEnvChange } from "@/packages/workit-core/src/hooks/identity-env";
 import { PLUGIN_DIR, runHook } from "@/test/workit-claude-code/plugin-helpers";
 
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-identity-env-")));
@@ -248,3 +249,261 @@ test("Given Claude Code's launcher, When the lead's command changes an identity 
     expect(reached(command), command).toBe(true);
   expect(reached("workit check test")).toBe(false);
 }, 120_000);
+
+// #980: a workit call that moves the state or config dir would read an issued-session
+// registry the agent wrote itself; refused on every host, in every spelling the guard reads.
+const STATE_VARIABLES = [
+  "WORKIT_STATE_DIR",
+  "WORKIT_CONFIG",
+  "WORKIT_CONFIG_DIR",
+  "XDG_STATE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+];
+const STATE_SPELLINGS = (name: string): string[] => [
+  `${name}=/tmp/alt workit ledger verdict verified --how x`,
+  `${name}= workit check test`,
+  `export ${name}=/tmp/alt; workit check test`,
+  `unset ${name} && workit check test`,
+  `env ${name}=/tmp/alt workit check test`,
+  `env -u ${name} workit check test`,
+  `env --unset=${name} workit check test`,
+  `env -S '${name}=/tmp/alt workit check test'`,
+  `timeout 60 env ${name}=/tmp/alt workit check test`,
+  `cd /w && ${name}=/tmp/alt workit check test`,
+  `bash -c 'export ${name}=/tmp/alt; workit check test'`,
+  `su -c '${name}=/tmp/alt workit check test' me`,
+];
+const HOSTS = [
+  [CLAUDE_CODE_DESCRIPTOR, "claude_code"],
+  [CODEX_DESCRIPTOR, "codex_cli"],
+  [CURSOR_DESCRIPTOR, "cursor"],
+  [OPENCODE_DESCRIPTOR, "opencode"],
+] as const;
+
+test.each(STATE_VARIABLES)(
+  "a workit call that sets, unsets or empties %s is denied on every host",
+  (name) => {
+    for (const command of STATE_SPELLINGS(name))
+      for (const [descriptor, host] of HOSTS) {
+        const decision = shellPre(command, "v1", descriptor, host);
+        expect(identityDenied(decision), `${command} (${host})`).toBe(true);
+        if (decision.kind === "deny") expect(decision.reason).toContain(`${name} changed`);
+      }
+  },
+);
+
+test.each([
+  ["$env:WORKIT_STATE_DIR = 'C:\\alt'; workit check test"],
+  ["$env:LOCALAPPDATA = 'C:\\alt'; workit ledger verdict verified --how x"],
+  ["Remove-Item env:HOME; workit check test"],
+  ["[Environment]::SetEnvironmentVariable('XDG_STATE_HOME', 'x'); workit check test"],
+])("PowerShell `%s` is denied on every host", (command) => {
+  for (const [descriptor, host] of HOSTS)
+    expect(identityDenied(shellPre(command, "v1", descriptor, host, "powershell")), host).toBe(
+      true,
+    );
+});
+
+test.each([
+  ["HOME=/tmp/x bun test"],
+  ["export XDG_STATE_HOME=/tmp/x; ls"],
+  ["WORKIT_STATE_DIR=/tmp/x bun test test/a.test.ts"],
+  ["echo $HOME; workit check test"],
+  ["workit check --cwd $HOME/w test"],
+  ["cd ~ && workit check test"],
+  ["MY_HOME=/x workit check test"],
+  ["grep -rn WORKIT_STATE_DIR docs; workit check test"],
+  ['echo "HOME=/x"; workit check test'],
+])("`%s` runs: it moves no state dir of a workit call", (command) => {
+  for (const [descriptor, host] of HOSTS)
+    expect(identityDenied(shellPre(command, "v1", descriptor, host)), `${command} (${host})`).toBe(
+      false,
+    );
+});
+
+test("PowerShell that sets a state variable without running workit runs", () => {
+  expect(
+    identityDenied(
+      shellPre("$env:HOME = 'C:\\x'; Get-ChildItem", "v1", undefined, undefined, "powershell"),
+    ),
+  ).toBe(false);
+});
+
+test("Cursor's own prefixed session still runs; the same call with a state dir is denied", () => {
+  const cursor = (command: string) =>
+    identityDenied(shellPre(command, null, CURSOR_DESCRIPTOR, "cursor"));
+  expect(cursor("WORKIT_SESSION_ID=s-lead workit ledger verdict verified --how x")).toBe(false);
+  expect(
+    cursor(
+      "WORKIT_SESSION_ID=s-lead WORKIT_STATE_DIR=/tmp/alt workit ledger verdict verified --how x",
+    ),
+  ).toBe(true);
+});
+
+test("Given Claude Code's launcher, When a workit call names a state variable, Then it leaves the fast path for the guard", () => {
+  const env = { WORKIT_CLAUDE_RUNTIME: "source", WORKIT_BUN: path.join(root, "no-bun") };
+  const reached = (command: string) =>
+    runHook(
+      PLUGIN_DIR,
+      {
+        hook_event_name: "PreToolUse",
+        session_id: `s-${crypto.randomUUID()}`,
+        transcript_path: "/tmp/x.jsonl",
+        cwd: root,
+        permission_mode: "default",
+        tool_name: "Bash",
+        tool_input: { command, description: "d" },
+        tool_use_id: "toolu_state",
+      },
+      env,
+    ).stderr.includes("hook unavailable");
+  for (const command of [
+    "WORKIT_STATE_DIR=/tmp/alt workit check test",
+    "XDG_STATE_HOME=/tmp/alt workit check test",
+    "HOME=/tmp/alt workit check test",
+    'bash -c "LOCALAPPDATA=x workit check test"',
+    "WORKIT_STATE_DIR=/tmp/alt npx @workit-dev/cli status",
+    'WORKIT_STATE_DIR=/tmp/alt "$(command -v workit)" status',
+    "HOME+=/x workit check test",
+    "unset HOME; /tmp/w status",
+  ])
+    expect(reached(command), command).toBe(true);
+  // A plain workit call stays fast.
+  expect(reached("workit check test")).toBe(false);
+}, 120_000);
+
+// #980 review round: the CLI under its other names, more spellings, and only real changes.
+test.each([
+  [
+    "WORKIT_STATE_DIR=/x node /n/node_modules/@workit-dev/cli/dist/index.js ledger verdict verified",
+  ],
+  ["WORKIT_STATE_DIR=/x node packages/workit-cli/dist/index.js status"],
+  ["WORKIT_STATE_DIR=/x bun packages/workit-cli/src/main.ts status"],
+  ["WORKIT_STATE_DIR=/x npx @workit-dev/cli status"],
+  ["WORKIT_STATE_DIR=/x bunx @workit-dev/cli@2 status"],
+  ["WORKIT_STATE_DIR=/x workit-cli status"],
+  ['WORKIT_STATE_DIR=/x "$(command -v workit)" status'],
+  ["WORKIT_STATE_DIR=/x $W status"],
+  ["export HOME=/x; $W status"],
+  ["HOME+=/x workit check test"],
+  ["export HOME+=/x; workit check test"],
+  ["HOME=/x xargs workit status < ids"],
+  ["HOME=/x find . -exec workit status ;"],
+  ['cmd /c "set APPDATA=C:\\alt&& workit status"'],
+  ['cmd.exe /C "set "LOCALAPPDATA=C:\\alt" && workit status"'],
+  ["HOME=/x; workit status"],
+  ["export HOME=/x && workit check lint"],
+  ["HOME=/x bash -c 'workit status'"],
+])("`%s` is denied: it changes a state dir for a workit run", (command) => {
+  for (const [descriptor, host] of HOSTS)
+    expect(identityDenied(shellPre(command, "v1", descriptor, host)), `${command} (${host})`).toBe(
+      true,
+    );
+});
+
+test.each([
+  ["HOME=/tmp/h npm test && workit check lint"],
+  ["workit status; HOME=/tmp/h npm test"],
+  ["bash -c 'HOME=/tmp/h npm test; workit status'"],
+  ["HOME=/tmp/h ls; workit check test"],
+  ["env HOME=/tmp/h ls && workit status"],
+])("`%s` runs: the assignment changes only another command's environment", (command) => {
+  for (const [descriptor, host] of HOSTS)
+    expect(identityDenied(shellPre(command, "v1", descriptor, host)), `${command} (${host})`).toBe(
+      false,
+    );
+});
+
+test.each([
+  ['cmd /c "set APPDATA=C:\\alt&& workit status"'],
+  ["[Environment]::SetEnvironmentVariable($n, 'x'); workit status"],
+  ['[Environment]::SetEnvironmentVariable("$n", "x"); workit status'],
+  ['Set-Item -Path "env:$n" -Value x; workit status'],
+  [". $PROFILE; workit status"],
+  ["${env:HOME} = 'C:\\alt'; workit status"],
+  ["$env:APPDATA += ';x'; workit status"],
+  ["$env:HOME = 'C:\\alt'; & $w status"],
+])("PowerShell `%s` is denied on every host", (command) => {
+  for (const [descriptor, host] of HOSTS)
+    expect(identityDenied(shellPre(command, "v1", descriptor, host, "powershell")), host).toBe(
+      true,
+    );
+});
+
+test.each([
+  ["Write-Host $env:HOME; workit status"],
+  ["cd $env:USERPROFILE\\proj; workit check test"],
+  ["workit --cwd $env:USERPROFILE\\proj check test"],
+  ["if ($env:HOME -eq 'x') { workit status }"],
+  ["[Environment]::GetEnvironmentVariable('HOME'); workit status"],
+  ["Copy-Item $env:HOME\\a.txt .; workit status"],
+  ["$env:HOME = 'C:\\x'; Get-ChildItem"],
+])(
+  "PowerShell `%s` runs: it reads a state variable, or changes one without a workit run",
+  (command) => {
+    for (const [descriptor, host] of HOSTS)
+      expect(identityDenied(shellPre(command, "v1", descriptor, host, "powershell")), host).toBe(
+        false,
+      );
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given a renamed link to the CLI, When a command sets a state variable for it, Then it is denied; a link to anything else runs",
+  () => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-identity-link-")));
+    try {
+      const bin = path.join(dir, "bin");
+      mkdirSync(bin);
+      writeFileSync(path.join(bin, "workit"), "#!/bin/sh\n");
+      writeFileSync(path.join(bin, "tool"), "#!/bin/sh\n");
+      symlinkSync(path.join(bin, "workit"), path.join(dir, "w"));
+      symlinkSync(path.join(bin, "tool"), path.join(dir, "t"));
+      const denied = (command: string) =>
+        identityEnvChange(command, "posix", { identity: true, cwd: dir }) !== null;
+      expect(denied(`WORKIT_STATE_DIR=/x ${path.join(dir, "w")} status`)).toBe(true);
+      expect(denied("WORKIT_STATE_DIR=/x ./w status")).toBe(true);
+      expect(denied("export HOME=/x; ./w status")).toBe(true);
+      expect(denied("WORKIT_STATE_DIR=/x ./t status")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+// #985 review: identity names follow the same scoping; PowerShell reads never count.
+test.each([
+  ["OPENCODE_SESSION_ID=x opencode run hi; workit status"],
+  ["WORKIT_HOST=claude_code other-tool; workit check test"],
+  ["workit status; WORKIT_AGENT_ID=a1 npm test"],
+  ["env -u WORKIT_HOST ls && workit status"],
+  ["bash -c 'WORKIT_SESSION_ID=x ls; workit status'"],
+])("`%s` runs: an identity assignment scoped to another command", (command) => {
+  for (const agent of ["v1", null])
+    expect(identityDenied(shellPre(command, agent)), `${command} (${agent ?? "lead"})`).toBe(false);
+});
+
+test.each([
+  ["export WORKIT_HOST=; ls; workit status"],
+  ["WORKIT_HOST=; workit status"],
+  ["unset WORKIT_SESSION_ID; workit status"],
+  ["WORKIT_AGENT_ID=a1 xargs workit status < ids"],
+  ["WORKIT_AGENT_ID=a1 npx @workit-dev/cli status"],
+  ["WORKIT_AGENT_ID=a1 $W status"],
+])("`%s` is denied: the identity change reaches a workit run", (command) => {
+  expect(identityDenied(shellPre(command, "v1"))).toBe(true);
+});
+
+test.each([
+  ["Write-Host $env:CLAUDECODE; workit status"],
+  ["if ($env:OPENCODE_SESSION_ID) { workit status }"],
+  ["Write-Host $env:WORKIT_HOST; workit status"],
+  ["[Environment]::GetEnvironmentVariable('WORKIT_SESSION_ID'); workit status"],
+])("PowerShell `%s` runs: it reads an identity variable", (command) => {
+  expect(identityDenied(shellPre(command, "v1", undefined, undefined, "powershell"))).toBe(false);
+});
