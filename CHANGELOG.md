@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - shared-workspace warnings match Workit only as a whole word in any script, so a non-ASCII letter or digit next to it (Workité) no longer counts as a boundary.
 - a judge's or implementer's read-only python -c, node -e or heredoc script with f-strings, template literals, whole-line comments, division, a string's .replace, .to_bytes or a Map's .delete now runs, and inline-script escapes (node --eval=, python3 -mpip, NODE_OPTIONS set anywhere in the command, NAME+=value before a command, Reflect and operator calls, a backslash-newline in an unquoted heredoc) are refused.
 - a judge's or implementer's inline python -c, node -e or bun -e script may import only the modules Workit reads (json, re, pathlib, os.path, sys reads, Node's path, url, util, fs reads and the like) and use a module only as name.member, so string-run sinks (timeit, runpy, pickle, ctypes, numpy writers), Node's module globals, process.binding, awk system() and print >, sed w and e, deno eval, tsx -e, flock, ssh and watch are refused, and a verifier's refusal names the import with a retry from its scratch dir.
+- a Workit command writing the threads store no longer fails as busy while another process makes many short writes; it waits until five seconds pass with no commit
 
 ### Changed
 
