@@ -22,9 +22,16 @@
 // is not covered. When git cannot read any of this, nothing is covered. A current independent failure or a tampered ledger on the
 // lower branch is never covered over. `pr merge`, `stack land`, `stack
 // status`, `pr status` and `ledger check` read this; the Stop hook does not.
+//
+// Set verdicts (#891, core/verdict-set.ts): a branch neither its own nor a
+// stack verdict accepts is covered by a set verdict recorded in any
+// repository on this machine on the same set hash, under the same rules.
+// The Stop hook reads the `pr.gate` row `pr status` records once the gate is met.
 import fs from "node:fs";
 import path from "node:path";
 import { branchLane } from "./core/policy/lane";
+import { recordedCi } from "./core/policy/pr-lane";
+import { findSetCover, type SetCover } from "./core/verdict-set";
 import { commitPatchIds, diffRaw, mergeBase } from "./git/rev";
 import {
   authorSessions,
@@ -47,7 +54,13 @@ export type StackCover = {
   head: string;
 };
 
-export type CoveredCheck = VerdictCheck & { cover: StackCover | null };
+export type CoveredCheck = VerdictCheck & {
+  cover: StackCover | null;
+  /** The set verdict that covers the head (#891), when neither its own nor a stack verdict does. */
+  set: SetCover | null;
+  /** Why a set verdict matching the head's diff does not cover it, when one does not. */
+  setNote: string | null;
+};
 
 type Chain = { name: string; trunk: string; above: string[] };
 
@@ -117,18 +130,23 @@ function covers(cwd: string, trunk: string, head: string, judged: string): boole
 /**
  * `checkVerdicts` for `branch`, and when it has no accepted verdict of its
  * own, the stack verdict that covers it (see the header): then `accepted`
- * names that verdict and `cover` says where it came from.
+ * names that verdict and `cover` says where it came from. Without one, a set
+ * verdict on the same set hash (`set`). `ci` is the head's checks state
+ * (default: the newest `pr.status` Workit recorded for it), which a set
+ * cover of a PR that changed a lockfile needs passing.
  */
 export function checkVerdictsCovered(
   cwd: string,
   branch: string,
   rows: readonly ReadRow[],
+  options: { ci?: string | null } = {},
 ): CoveredCheck {
   const check = checkVerdicts(cwd, branch, rows);
   const blocked = check.accepted.reasons.some(
     (reason) => reason === "failing_verdict" || reason === "ledger_tampered",
   );
-  if (check.accepted.accepted || blocked || !check.head) return { ...check, cover: null };
+  if (check.accepted.accepted || blocked || !check.head)
+    return { ...check, cover: null, set: null, setNote: null };
   let authors: Set<string> | null = null;
   for (const chain of chainsAbove(cwd, branch))
     for (const upper of chain.above) {
@@ -145,7 +163,25 @@ export function checkVerdictsCovered(
         review: "verified",
         selfVerdict: null,
         cover: { stack: chain.name, branch: upper, verdictId: row.id, head: row.head },
+        set: null,
+        setNote: null,
       };
     }
-  return { ...check, cover: null };
+  const reading = findSetCover(cwd, {
+    base: check.base ?? defaultBase(cwd),
+    head: check.head,
+    authors: new Set(check.authors),
+    ci: options.ci === undefined ? recordedCi(cwd, check.head) : options.ci,
+  });
+  if (reading.cover && reading.row)
+    return {
+      ...check,
+      accepted: { accepted: true, verdict: reading.row, reasons: [] },
+      review: "verified",
+      selfVerdict: null,
+      cover: null,
+      set: reading.cover,
+      setNote: null,
+    };
+  return { ...check, cover: null, set: null, setNote: reading.note };
 }

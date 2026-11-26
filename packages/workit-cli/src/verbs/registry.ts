@@ -1089,9 +1089,9 @@ export const VERBS: readonly VerbEntry[] = [
         flagHints: {
           repo: "a verdict is recorded in the checkout you run it from: pass --cwd <dir> (workit ledger --cwd <dir> verdict …)",
         },
-        usage: `workit ledger verdict <result> --how "<method/evidence>" [--head <sha>] [--kind unit|live|perf|review] [--base <ref>] [--surface ui|cli|api] [--evidence <ref>]… [--self] ${LEDGER_ACTOR} | ledger verdict [<branch>]`,
+        usage: `workit ledger verdict <result> --how "<method/evidence>" [--head <sha>] [--kind unit|live|perf|review] [--base <ref>] [--surface ui|cli|api] [--evidence <ref>]… [--self] [--set <name>] ${LEDGER_ACTOR} | ledger verdict [<branch>]`,
         summary:
-          "Record a SHA-keyed verdict on the branch head (result: verified, tests-verified, type-check-only, blocked, failed), or show the current verdicts",
+          "Record a SHA-keyed verdict on the branch head (result: verified, tests-verified, type-check-only, blocked, failed), or show the current verdicts; --set also shares it with every PR on this machine whose diff is the same",
       },
       {
         name: "list",

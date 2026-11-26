@@ -48,6 +48,7 @@ const ENTRY_KEYS = [
   "glob",
   "remotes",
   "externalRepos",
+  "additiveRiskPaths",
   "vcs",
   "autonomy",
   "autoApprove",
@@ -63,7 +64,7 @@ const ENTRY_KEYS = [
 export const IDENTITY_KEYS = ["provider", "account", "tokenFile", "host"] as const;
 
 /**
- * The authority fields of every entry, in entry order: name, glob, remotes, externalRepos,
+ * The authority fields of every entry, in entry order: name, glob, remotes, externalRepos, additiveRiskPaths,
  * the forge identity (vcs.provider, account, tokenFile, host), autonomy, legacy autoApprove, defaultEndpoint,
  * verification, youtrack.writes and youtrack.autoHosts. Roles, branch policy, checks and the rest
  * stay outside, so changing them keeps the seal valid.

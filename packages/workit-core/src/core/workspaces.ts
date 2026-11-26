@@ -326,6 +326,10 @@ export const workspaceConfigSchema = z
       ),
       "Repositories outside this workspace's own forge owners that `workit issue create|comment|close --repo` may write to: `owner/name`, or `owner/*` for a whole owner. Only the user changes it, in their own terminal.",
     ),
+    additiveRiskPaths: described(
+      z.optional(z.array(nonBlank)),
+      "Risk-path globs whose purely additive edits follow the review lane of the rest of the diff. Only the user sets it; it counts only while sealed.",
+    ),
     autonomy: described(
       z.optional(
         z.looseObject(

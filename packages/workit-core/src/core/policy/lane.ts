@@ -114,7 +114,7 @@ const RISK_NAMES = new Set([".gitattributes"]);
 /** The repo's own risk paths, one glob per line at the base revision (decision B3: they only tighten). */
 export const RISK_PATHS_FILE = ".workit/risk-paths";
 
-const LOCKFILES = new Set([
+export const LOCKFILES: ReadonlySet<string> = new Set([
   "bun.lock",
   "bun.lockb",
   "package-lock.json",
@@ -211,7 +211,7 @@ export function kindOf(file: ChangedFile): FileKind {
 
 const globCache = new Map<string, RegExp>();
 /** `**` spans directories, `*` and `?` stay within one. */
-function globMatch(pattern: string, file: string): boolean {
+export function globMatch(pattern: string, file: string): boolean {
   let regex = globCache.get(pattern);
   if (!regex) {
     let source = "";

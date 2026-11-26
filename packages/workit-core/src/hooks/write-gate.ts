@@ -244,7 +244,7 @@ const isConfigDir = (file: string): boolean =>
 /** Whether `file` is a config dir or a state registry root (`<state>/issued*`, `<state>/approvals`). */
 const isRoot = (file: string): boolean =>
   isConfigDir(file) ||
-  /^(?:issued[^\\/]*|approvals)$/.test(
+  /^(?:issued[^\\/]*|approvals|verdicts)$/.test(
     path.relative(canonical(resolveStateDir()), canonical(file)),
   );
 
@@ -1889,7 +1889,7 @@ export const liveTargets = (cwd: string, paths: readonly string[] | null): strin
  * one would forge an issued session, a token or the user's yes, or raise its
  * own grants.
  */
-type Registry = "issued" | "approvals" | "grants";
+type Registry = "issued" | "approvals" | "grants" | "ledger";
 /** A guarded registry, or "link": a symlink chain too long to follow, which may reach one. */
 type Denied = Registry | "link";
 
@@ -1941,7 +1941,7 @@ const globbed = (cwd: string, target: string, state: string, configs: string[]):
   };
   let roots: string[] = [];
   try {
-    roots = readdirSync(state).filter((name) => /^(?:issued|approvals$)/.test(name));
+    roots = readdirSync(state).filter((name) => /^(?:issued|approvals$|verdicts$)/.test(name));
   } catch {
     // No state dir yet: no registry to hit.
   }
@@ -1967,8 +1967,14 @@ const guardedInodes = (state: string, configs: string[]): Map<string, Registry> 
   try {
     for (const dir of configs) for (const name of CONFIG_FILES) add(path.join(dir, name), "grants");
     for (const name of readdirSync(state))
-      if (/^(?:issued|approvals$)/.test(name))
-        add(path.join(state, name), name === "approvals" ? "approvals" : "issued");
+      if (/^(?:issued|approvals$|verdicts$)/.test(name))
+        add(
+          path.join(state, name),
+          name === "approvals" ? "approvals" : name === "verdicts" ? "ledger" : "issued",
+        );
+    // A non-git folder's ledger (<state>/folders/<slug>/ledger).
+    for (const slug of readdirSync(path.join(state, "folders")))
+      add(path.join(state, "folders", slug, "ledger"), "ledger");
   } catch {
     // An unreadable state dir: the files read so far.
   }
@@ -2009,6 +2015,9 @@ const registryTarget = (
     const registry =
       hardLinked(path.resolve(cwd, file), state, configs, inodes) ??
       underRegistry(state, cwd, file, process.platform, canonical) ??
+      (/[\\/]\.git[\\/]workit[\\/]ledger(?:[\\/]|$)/.test(canonical(path.resolve(cwd, file)))
+        ? "ledger"
+        : null) ??
       (configs.some((dir) => underConfig(dir, cwd, file, process.platform, canonical))
         ? "grants"
         : null);
@@ -2046,8 +2055,11 @@ export const underRegistry = (
   platform: NodeJS.Platform = process.platform,
   real: (file: string) => string = (file) => file,
 ): Registry | null => {
-  const first = partsUnder(state, cwd, target, platform, real)?.[0];
+  const parts = partsUnder(state, cwd, target, platform, real) ?? [];
+  const first = parts[0];
   if (first?.startsWith("issued")) return "issued";
+  // The verdict store, or a non-git folder's ledger (<state>/folders/<slug>/ledger).
+  if (first === "verdicts" || (first === "folders" && parts[2] === "ledger")) return "ledger";
   return first === "approvals" ? "approvals" : null;
 };
 
@@ -2095,13 +2107,24 @@ export const unquotedWindowsRegistry = (
   const text = flat(command);
   const state = flat(resolveStateDir());
   const configs = configDirs().map(flat);
+  // The verdict store, a repository ledger, or a non-git folder's ledger.
+  const folders = `${state}/folders/`;
+  const ledger = (at: string) =>
+    at.includes(`${state}/verdicts`) ||
+    /\/\.git\/workit\/ledger(?:[/\s'"]|$)/.test(at) ||
+    at
+      .split(folders)
+      .slice(1)
+      .some((rest) => /^[^/\s]+\/ledger(?:[/\s'"]|$)/.test(rest));
   const registry: Registry | null = text.includes(`${state}/issued`)
     ? "issued"
     : text.includes(`${state}/approvals`)
       ? "approvals"
-      : configs.some((dir) => text.includes(dir))
-        ? "grants"
-        : null;
+      : ledger(text)
+        ? "ledger"
+        : configs.some((dir) => text.includes(dir))
+          ? "grants"
+          : null;
   if (!registry) return null;
   const spans = command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) =>
     word.replaceAll("\\", "/"),
@@ -2124,7 +2147,9 @@ export const unquotedWindowsRegistry = (
         ? configs.some((cfg) =>
             [cfg, `${cfg}/`, ...CONFIG_FILES.map((name) => `${cfg}/${name}`)].includes(at),
           )
-        : at.includes(`${state}/${registry}`);
+        : registry === "ledger"
+          ? ledger(at)
+          : at.includes(`${state}/${registry}`);
     });
   return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };
@@ -2146,6 +2171,11 @@ const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: stri
     what: "Workit's host-approval state",
     unblock:
       "Approval requests and the user's yes are written only by Workit: run `workit approve <id>` as its own call so the host asks the user, or ask the user to run it in their own terminal; never edit the approvals registry by hand.",
+  },
+  ledger: {
+    label: "ledger guard",
+    what: "a Workit ledger",
+    unblock: "Only the workit CLI writes it (`workit ledger …`); never edit it by hand.",
   },
   grants: {
     label: "config guard",

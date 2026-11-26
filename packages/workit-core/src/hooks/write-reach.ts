@@ -1,5 +1,5 @@
-// Can a tool call reach a guarded path (the state dir's `issued*` and
-// `approvals` registries, a config dir)? The launchers' cheap test before the
+// Can a tool call reach a guarded path (the state dir's `issued*`,
+// `approvals` and `verdicts` registries, a ledger, a config dir)? The launchers' cheap test before the
 // runtime loads (ruling hook-reach-2026-11-13): in a checkout with no task
 // store, a write the registry guard (write-gate.ts) may deny goes to the
 // runtime, and every other write is answered by the launcher. No verb list:
@@ -113,7 +113,10 @@ const reachTests = (dirs: ReachDirs) => {
     file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
-      /^(?:issued[^\\/]*|approvals)(?:[\\/]|$)/.test(path.relative(state, file)));
+      /^(?:issued[^\\/]*|approvals|verdicts|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
+        path.relative(state, file),
+      )) ||
+    /[\\/]\.git[\\/]workit[\\/]ledger(?:[\\/]|$)/.test(file);
   const above = (file: string) => within(file, state) || configs.some((dir) => within(file, dir));
   const linked = (file: string) => {
     try {

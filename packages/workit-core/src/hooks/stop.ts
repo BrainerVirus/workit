@@ -293,6 +293,11 @@ const unverified = (
 ): StopObligation | null => {
   const check = checkVerdicts(cwd, branch, all);
   if (check.accepted.accepted || check.accepted.reasons.includes("failing_verdict")) return null;
+  // The merge gate `pr status` read as met for this head (a set or stack
+  // verdict, a sealed additiveRiskPaths, #891): its `pr.gate` row stands.
+  // Only the CLI writes that type, and `all` holds chained rows only.
+  if (all.some((row) => row.type === "pr.gate" && row.branch === branch && row.head === check.head))
+    return null;
   const judgment = currentJudgment(cwd);
   const high = judgment?.riskTier === "high";
   let independent: boolean;

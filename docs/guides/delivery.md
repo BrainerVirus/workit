@@ -580,7 +580,13 @@ workit verify-delivery [push|pr|merge|release] [--expect pushed|pr|merged|releas
   `--unverified --reason "<why>"`, which merges without a verdict and records
   a `merge.unverified` ledger row, but never over a current independent
   failed verdict ([grants](grants.md#merging)). `type-check-only` never
-  satisfies the gate.
+  satisfies the gate. The same change in several repositories needs one
+  review: a [set verdict](verification.md#carry-over-and-stack-verdicts)
+  (`workit ledger verdict … --set <name>`) is accepted by every PR on this
+  machine whose diff is the same, and a sealed
+  [`additiveRiskPaths`](grants.md#additive-risk-paths) lets a trusted
+  workflow's guarded appends follow the rest of the diff, instead of
+  `--unverified` per PR.
 - A verdict recorded in another clone or worktree of the same remote counts,
   even after that clone is deleted, and the PR branch need not be local:
   `workit pr merge --pr <n>` reads the head from the forge, fetches that

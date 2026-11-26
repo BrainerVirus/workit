@@ -482,6 +482,31 @@ const parseExternalRepos = (raw: string): string[] | null | Error => {
   return repos as string[];
 };
 
+const ADDITIVE_RISK_PATHS_KEY = "additiveRiskPaths";
+/** "Additive" is a shape rule: what the user is trusting when they seal a path. */
+const ADDITIVE_WARNING =
+  "Warning: additive is a shape rule, so any command appended with && to a listed workflow skips review (curl, wget, npx, bunx, dlx, gh, push, publish and deploy are refused); list only workflows whose appends you trust.";
+/** A repo-relative glob: path characters, `*` and `?`; no `..` segment. */
+const RISK_GLOB = /^(?!.*(?:^|\/)\.\.(?:\/|$))[\w.*?/@+-]+$/u;
+
+/** `additiveRiskPaths=` (#891) as a JSON array, or comma-separated globs; `null` removes. */
+const parseAdditiveRiskPaths = (raw: string): string[] | null | Error => {
+  const value = parseSetValue(raw);
+  if (value === null) return null;
+  const globs = Array.isArray(value)
+    ? value
+    : String(value)
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const bad = globs.find((item) => typeof item !== "string" || !RISK_GLOB.test(item));
+  if (bad !== undefined || globs.length === 0)
+    return Error(
+      `additiveRiskPaths: ${bad === undefined ? "no path given" : `${JSON.stringify(bad)} is not a repo-relative path or glob`} (such as .github/workflows/ci.yml)`,
+    );
+  return globs as string[];
+};
+
 /** The origin URL of the folder `add` runs for: the glob's root, else cwd. */
 const originOf = (glob: string, cwd: string): string | null => {
   for (const where of [globRoot(glob), cwd]) {
@@ -659,6 +684,14 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
       changes.push({ path: keyPath, value: repos });
       continue;
     }
+    if (!global && keyPath[0] === ADDITIVE_RISK_PATHS_KEY) {
+      if (keyPath.length > 1) return usage(io, `${spec}: additiveRiskPaths takes the whole list`);
+      const globs = parseAdditiveRiskPaths(spec.slice(eq + 1));
+      if (globs instanceof Error) return usage(io, globs.message);
+      remoteSpecs.push(spec);
+      changes.push({ path: keyPath, value: globs });
+      continue;
+    }
     if (!global && SCOPE_KEYS.has(keyPath[0]))
       return emit(
         io,
@@ -757,7 +790,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
         io,
         fail(
           "blocked",
-          `grant_raise_refused: remotes decides which checkouts "${name}"'s grants cap, and externalRepos which other owners' issues an agent writes to; changing either needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
+          `grant_raise_refused: remotes decides which checkouts "${name}"'s grants cap, externalRepos which other owners' issues an agent writes to, and additiveRiskPaths which risk paths an additive edit leaves; changing any of them needs the user at an interactive terminal${agent ? ` (this shell belongs to an agent: ${agent} is set)` : ""}`,
           {
             unblock: `ask the user to run, in a terminal outside the agent host (not Claude Code's \`!\` prefix or an agent shell): ${command}`,
           },
@@ -766,7 +799,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
     const answer = await askOrCancel(io, () =>
       confirmWith(
         deps,
-        `Change workspace "${name}": ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants; agents write issues to every externalRepos repository.`,
+        `Change workspace "${name}": ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants; agents write issues to every externalRepos repository; an additive edit to an additiveRiskPaths path follows the rest of the diff's review lane.${remoteSpecs.some((spec) => spec.startsWith(`${ADDITIVE_RISK_PATHS_KEY}=`)) ? ` ${ADDITIVE_WARNING}` : ""}`,
       ),
     );
     if (answer === null) return cancelled(io);

@@ -293,6 +293,59 @@ export const externalReposPolicy = (
   }
 };
 
+/** An entry's additiveRiskPaths (#891): risk-path globs, none when unset. */
+const additiveRiskPathsOf = (entry: WorkspaceConfig | null): string[] =>
+  entry?.additiveRiskPaths ?? [];
+
+export type AdditiveRiskPathsPolicy = {
+  /** The globs that count: empty unless the seal is valid. */
+  paths: string[];
+  /** The globs the folder's entry lists, sealed or not (for the note an unsealed list gets). */
+  configured: string[];
+  workspace: string | null;
+  sealed: boolean;
+};
+
+/**
+ * The risk paths whose purely additive edits follow the lane of the rest of
+ * the diff (#891): the folder entry's `additiveRiskPaths`, read like
+ * externalReposPolicy (the account's own file with a valid seal, never under
+ * a config redirect or in a bench world; with WORKIT_WORKSPACE_NAME only the
+ * globs both entries list). Anything that throws reads as none.
+ */
+export const additiveRiskPathsPolicy = (cwd: string): AdditiveRiskPathsPolicy => {
+  let configured: string[] = [];
+  let workspace: string | null = null;
+  let sealed = false;
+  try {
+    const dir = accountDir();
+    if (dir && !redirected(dir) && !evalWorld(cwd)) {
+      const folder = resolveWorkspaceFrom(cwd, dir);
+      configured = additiveRiskPathsOf(folder);
+      workspace = folder?.name ?? null;
+      sealed = checkSeal(dir).state === "valid";
+    }
+  } catch {
+    // unreadable: none configured
+  }
+  return { paths: sealedAdditiveRiskPaths(cwd), configured, workspace, sealed };
+};
+
+/** additiveRiskPathsPolicy's `paths` alone: what the Stop hook's lane reads. */
+export const sealedAdditiveRiskPaths = (cwd: string): string[] => {
+  try {
+    const dir = accountDir();
+    if (dir === null || redirected(dir) || evalWorld(cwd) || checkSeal(dir).state !== "valid")
+      return [];
+    const own = additiveRiskPathsOf(resolveWorkspaceFrom(cwd, dir));
+    const name = process.env.WORKIT_WORKSPACE_NAME?.trim();
+    const named = name ? additiveRiskPathsOf(resolveWorkspaceFrom(cwd, dir, name)) : own;
+    return own.filter((glob) => named.includes(glob));
+  } catch {
+    return [];
+  }
+};
+
 /** Whether the config dir the rest of the config reads is not the account's own. */
 const redirected = (dir: string): boolean => path.resolve(resolveConfigDir()) !== path.resolve(dir);
 

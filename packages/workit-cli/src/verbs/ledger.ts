@@ -11,6 +11,8 @@
 //   workit ledger verdict  <result> --how "<method/evidence>" [--kind unit|live|perf|review]
 //                          [--pr n|--branch b] [--base <ref>] [--surface ui|cli|api]
 //                          [--evidence <ref>…] [--self] [--session <id> [--token <t>] | --as <role>]
+//                          [--set <name>]   # also a set verdict (#891): every PR on this
+//                                           # machine whose diff is the same accepts it
 //   workit ledger verdict  [<branch>]                 # current + accepted verdicts
 //   workit ledger list|show [--branch b] [--pr n] [--type t] [--last|--limit n]
 //   workit ledger finding …                         # runs workit finding record|list|resolve
@@ -86,6 +88,15 @@ import {
   type VerdictRow,
 } from "@workit-dev/core/src/ledger";
 import { checkVerdictsCovered, type CoveredCheck } from "@workit-dev/core/src/verdict-cover";
+import {
+  derivedSession,
+  recordSetVerdict,
+  recordSetVoid,
+  SET_NAME,
+  SET_SESSION_UNBLOCK,
+  setCoverLabel,
+  setSessionError,
+} from "@workit-dev/core/src/core/verdict-set";
 import { planLeads, readFanout, selectFanout, type FanoutFile } from "@workit-dev/core/src/fanout";
 import { currentBranch, headSha, resolveRef } from "@workit-dev/core/src/git/rev";
 import {
@@ -186,6 +197,7 @@ const OPTIONS = {
   surface: { type: "string" },
   evidence: { type: "string", multiple: true },
   self: { type: "boolean" },
+  set: { type: "string" },
   branch: { type: "string" },
   head: { type: "string" },
   base: { type: "string" },
@@ -216,6 +228,7 @@ type Values = {
   surface?: string;
   evidence?: string[];
   self?: boolean;
+  set?: string;
   branch?: string;
   head?: string;
   base?: string;
@@ -320,6 +333,8 @@ const verdictLines = (check: CoveredCheck): string[] => {
   const lines = [
     `${check.branch} @ ${(check.head ?? "no commit").slice(0, 12)}: current: ${check.current.basis}${typeof check.current.verdict?.result === "string" ? ` (${check.current.verdict.result})` : ""}; ${check.accepted.accepted ? "accepted" : `not accepted (${check.accepted.reasons.join(", ")})`}; review: ${check.review}`,
   ];
+  if (check.set) lines.push(`  covered by ${setCoverLabel(check.set)}`);
+  else if (check.setNote) lines.push(`  set verdict: ${check.setNote}`);
   if (check.cover)
     lines.push(
       `  covered by stack verdict ${check.cover.verdictId} on ${check.cover.branch} @ ${check.cover.head.slice(0, 12)} (stack ${check.cover.stack})`,
@@ -662,6 +677,16 @@ export async function run(argv: string[], ioIn: Io): Promise<number> {
     );
   if (rest.length !== 1)
     return usage(io, `ledger verdict takes one result: ${VERDICT_RESULTS.join("|")}`);
+  if (values.set !== undefined && (values.self === true || values.as !== undefined))
+    return usage(
+      io,
+      "--set shares a host-derived non-author verdict: never with --self, nor with --as (an id any session can mint)",
+    );
+  if (values.set !== undefined && !SET_NAME.test(values.set))
+    return usage(
+      io,
+      `--set ${values.set}: a set name is letters, digits, ".", "_" or "-" (at most 64)`,
+    );
   // An independent verdict acts only as this shell's own host session or a
   // host-derived child of it; a self verdict is never accepted, so it is not checked.
   const claimed = values.self === true ? null : claimedSession(acting);
@@ -669,6 +694,8 @@ export async function run(argv: string[], ioIn: Io): Promise<number> {
   // never counts, so a judge whose binding never arrived is told so (#505).
   if (values.self !== true && claimed === null)
     return emit(io, fail("blocked", NO_SESSION_ERROR, { unblock: NO_SESSION_UNBLOCK }));
+  if (values.set !== undefined && !derivedSession(claimed))
+    return emit(io, fail("blocked", setSessionError(claimed), { unblock: SET_SESSION_UNBLOCK }));
   const token = values.token ?? io.env.WORKIT_SESSION_TOKEN ?? null;
   const refusal =
     claimed === null
@@ -759,13 +786,41 @@ export async function run(argv: string[], ioIn: Io): Promise<number> {
     io.stderr(
       `warning: no passing \`workit check test\` observed on ${(verdict.value.head ?? "this head").slice(0, 12)}; run it before a --self verdict\n`,
     );
+  // A set verdict (#891): the same row, shared by its set hash with every repository here.
+  const shared =
+    verdict.ok && values.set !== undefined
+      ? recordSetVerdict(io.cwd, verdict.value, values.set)
+      : null;
+  if (shared && !shared.ok && verdict.ok)
+    return emit(
+      io,
+      fail(
+        shared.code,
+        `${shared.error}; verdict ${verdict.value.id} was recorded on ${verdict.value.branch ?? "the branch"} only`,
+        shared.unblock ? { unblock: shared.unblock } : {},
+      ),
+    );
   const shadowed = verdict.ok ? shadowedWhy(io.cwd, verdict.value) : null;
   if (shadowed) io.stderr(`warning: ${shadowed}\n`);
   // What the gates read now, so a verdict that does not count never passes silently.
-  const withGate: LedgerResult<VerdictRow & { gate: GateReading | null }> = verdict.ok
+  const withGate: LedgerResult<
+    VerdictRow & { gate: GateReading | null; set?: { name: string; hash: string; expires: string } }
+  > = verdict.ok
     ? {
         ok: true,
-        value: { ...verdict.value, gate: gateReading(io.cwd, verdict.value) },
+        value: {
+          ...verdict.value,
+          gate: gateReading(io.cwd, verdict.value),
+          ...(shared?.ok
+            ? {
+                set: {
+                  name: shared.value.set,
+                  hash: shared.value.setHash,
+                  expires: shared.value.expires,
+                },
+              }
+            : {}),
+        },
       }
     : verdict;
   return fromResult(io, withGate, (row) =>
@@ -775,6 +830,11 @@ export async function run(argv: string[], ioIn: Io): Promise<number> {
       row.gate
         ? `gate: ${row.branch} ${row.gate.accepted ? `accepted (verdict ${row.gate.verdictId ?? "?"})` : `not accepted (${row.gate.reasons.join(", ")})`}`
         : "gate: unknown (ledger unreadable)",
+      ...(row.set
+        ? [
+            `set: ${row.set.name} on diff ${row.set.hash.slice(7, 19)} until ${row.set.expires}: a PR in any repository here whose diff is the same accepts it`,
+          ]
+        : []),
     ].join("\n"),
   );
 }
@@ -938,14 +998,32 @@ async function voidVerdict(io: Io, values: Values, args: string[]): Promise<numb
     { target: args[0], reason: values.reason },
   );
   if (!voided.ok) return failed(io, voided);
+  // A verdict shared as a set verdict (#891) stops covering other repositories' PRs too.
+  const retired = recordSetVoid(io.cwd, {
+    target: voided.value.target,
+    reason: voided.value.reason,
+    actor: voided.value.actor,
+  });
+  if (!retired.ok)
+    return failed(io, {
+      ...retired,
+      error: `${retired.error}; verdict ${voided.value.target} was voided here, but its set verdict still covers matching PRs elsewhere`,
+    });
   const { branch } = voided.value;
-  const row = { ...voided.value, gate: gateReading(io.cwd, { branch }) };
+  const row = {
+    ...voided.value,
+    setRetired: retired.value,
+    gate: gateReading(io.cwd, { branch }),
+  };
   return emit(io, ok(row), (data) =>
     [
       `voided verdict ${data.target} (${data.targetResult ?? "?"} on ${branch ?? "no branch"}): ${data.reason}`,
       data.gate
         ? `gate: ${branch} ${data.gate.accepted ? `accepted (verdict ${data.gate.verdictId ?? "?"})` : `not accepted (${data.gate.reasons.join(", ")})`}`
         : "gate: unknown",
+      ...(data.setRetired
+        ? ["set verdict retired: it no longer covers PRs in other repositories"]
+        : []),
     ].join("\n"),
   );
 }
