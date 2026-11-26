@@ -11,13 +11,18 @@ const SESSION_TRAILER = /^\s*Workit-Session\s*:/iu;
 const WORKIT_MARKER = /<!--\s*workit[\s\S]*?-->/giu;
 const NEW_DOC = /\.mdx?$/iu;
 
-/** The 1-based lines of `text` that name Workit, the trailer and markers aside. */
-export function workitLines(text: string): number[] {
+/** One line of a PR or doc that names Workit: where it is, its 1-based line, its text. */
+export type SharedHit = { place: string; line: number; text: string };
+
+/** The lines of `text` that name Workit, the trailer and markers aside. */
+export function workitLines(text: string): Array<{ line: number; text: string }> {
   const unmarked = text.replaceAll(WORKIT_MARKER, (marker) => marker.replaceAll(/[^\n]/gu, ""));
   return unmarked
     .split("\n")
     .flatMap((line, index) =>
-      !SESSION_TRAILER.test(line) && NAMES_WORKIT.test(line) ? [index + 1] : [],
+      !SESSION_TRAILER.test(line) && NAMES_WORKIT.test(line)
+        ? [{ line: index + 1, text: line.trim() }]
+        : [],
     );
 }
 
@@ -37,13 +42,14 @@ const addedDocs = (cwd: string, fork: string): string[] =>
     .split("\0")
     .filter((file) => NEW_DOC.test(file));
 
-const lineList = (lines: readonly number[]): string =>
-  `${lines.length === 1 ? "line" : "lines"} ${lines.join(", ")}`;
+const lineList = (hits: readonly { line: number }[]): string =>
+  `${hits.length === 1 ? "line" : "lines"} ${hits.map((hit) => hit.line).join(", ")}`;
 
 /**
- * One warning per place that names Workit: the title, the body, each doc the
- * branch adds since `fork` (skipped when `fork` is null). Each names the place
- * and asks for a rewording.
+ * The places that name Workit: the title, the body, each doc the branch adds
+ * since `fork` (skipped when `fork` is null). `messages` holds one warning per
+ * place that names it and asks for a rewording; `hits` one entry per line
+ * (`place` is title, body or the doc's path).
  */
 export function sharedWorkspaceWarnings(input: {
   cwd: string;
@@ -51,18 +57,29 @@ export function sharedWorkspaceWarnings(input: {
   title?: string | undefined;
   body?: string | undefined;
   fork: string | null;
-}): string[] {
-  const places: string[] = [];
-  if (input.title !== undefined && workitLines(input.title).length) places.push("the PR title");
-  const body = input.body === undefined ? [] : workitLines(input.body);
-  if (body.length) places.push(`the PR body (${lineList(body)})`);
+}): { messages: string[]; hits: SharedHit[] } {
+  const places: Array<{
+    place: string;
+    label: string;
+    lines: Array<{ line: number; text: string }>;
+  }> = [];
+  if (input.title !== undefined)
+    places.push({ place: "title", label: "the PR title", lines: workitLines(input.title) });
+  if (input.body !== undefined) {
+    const lines = workitLines(input.body);
+    places.push({ place: "body", label: `the PR body (${lineList(lines)})`, lines });
+  }
   for (const file of input.fork ? addedDocs(input.cwd, input.fork) : []) {
     const lines = workitLines(git(input.cwd, ["show", `HEAD:${file}`]) ?? "");
-    if (lines.length) places.push(`new doc ${file} (${lineList(lines)})`);
+    places.push({ place: file, label: `new doc ${file} (${lineList(lines)})`, lines });
   }
+  const named = places.filter((entry) => entry.lines.length);
   const where = input.workspace ? `workspace ${input.workspace} is shared` : "shared workspace";
-  return places.map(
-    (place) =>
-      `${where}: ${place} names Workit; reword it so the team repo does not mention it (a warning only)`,
-  );
+  return {
+    messages: named.map(
+      (entry) =>
+        `${where}: ${entry.label} names Workit; reword it so the team repo does not mention it (a warning only)`,
+    ),
+    hits: named.flatMap((entry) => entry.lines.map((hit) => ({ place: entry.place, ...hit }))),
+  };
 }

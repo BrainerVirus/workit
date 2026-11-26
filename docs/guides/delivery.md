@@ -881,7 +881,9 @@ Some team repos must not mention Workit. Mark the workspace with
 case): the title, the body with its line numbers, and each new `.md` or `.mdx`
 file the branch adds since its base. Each line asks you to reword. The PR still
 opens or updates: it is a warning, never a block. What Workit writes itself does
-not count: the `Workit-Session:` trailer and `<!-- workit… -->` markers. Turn
+not count: the `Workit-Session:` trailer and `<!-- workit… -->` markers. With
+`--json`, `data.sharedWarnings` lists each line that names it as
+`{ place, line, text }` (`place` is `title`, `body` or the doc's path). Turn
 commit trailers off too with `trailers=false`
 ([trailers](configuration.md)).
 

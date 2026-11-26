@@ -195,3 +195,50 @@ test("Given an unshared workspace, When workspace set team shared=true runs, The
   expect(result.code, result.stderr).toBe(0);
   expect(warnings(result.stderr)).toHaveLength(1);
 });
+
+test("Given shared: true, When pr create and pr edit run with --json, Then data.sharedWarnings lists each line by place, line and text and stderr still warns", async () => {
+  const { repo } = setup(true, { file: "docs/notes.md", text: "# Notes\n\nRun `workit check`.\n" });
+  const created = await run(
+    [
+      "pr",
+      "create",
+      "--base",
+      "main",
+      "--title",
+      "feat: workit hook",
+      "--body",
+      "Why\n\nUse Workit.",
+      "--json",
+    ],
+    repo.cwd,
+  );
+  expect(created.code, created.stderr).toBe(0);
+  expect(JSON.parse(created.stdout).data.sharedWarnings).toEqual([
+    { place: "title", line: 1, text: "feat: workit hook" },
+    { place: "body", line: 3, text: "Use Workit." },
+    { place: "docs/notes.md", line: 3, text: "Run `workit check`." },
+  ]);
+  expect(warnings(created.stderr)).toHaveLength(3);
+  const bodyFile = path.join(repo.root, "body.md");
+  writeFileSync(bodyFile, "Summary\nWorkit-Session: s-1\n");
+  const clean = await run(
+    ["pr", "edit", "--pr", "12", "--body-file", bodyFile, "--json"],
+    repo.cwd,
+  );
+  expect(clean.code, clean.stderr).toBe(0);
+  // The trailer is exempt; the branch's new doc still names Workit.
+  expect(JSON.parse(clean.stdout).data.sharedWarnings).toEqual([
+    { place: "docs/notes.md", line: 3, text: "Run `workit check`." },
+  ]);
+  writeFileSync(bodyFile, "Summary\nby workit\n");
+  const edited = await run(
+    ["pr", "edit", "--pr", "12", "--body-file", bodyFile, "--json"],
+    repo.cwd,
+  );
+  expect(edited.code, edited.stderr).toBe(0);
+  expect(JSON.parse(edited.stdout).data.sharedWarnings).toEqual([
+    { place: "body", line: 2, text: "by workit" },
+    { place: "docs/notes.md", line: 3, text: "Run `workit check`." },
+  ]);
+  expect(warnings(edited.stderr)).toHaveLength(2);
+});
