@@ -128,14 +128,31 @@ const operands = (words: string[]) => words.filter((item) => !item.startsWith("-
 const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 
 /**
+ * The command past leading assignments and PREFIXES (up to an `xargs`), with
+ * `env`'s options: `-u NAME` and `-C DIR` take a value, `-S '<line>'` splits
+ * its line into the command.
+ */
+const pastLead = (input: readonly string[]): string[] => {
+  let words = [...input];
+  for (let env = false; words.length && words[0] !== "xargs";) {
+    const [word, next = ""] = words;
+    if (env && /^-S$|^--split-string$/.test(word))
+      words = [...next.split(/\s+/).filter(Boolean), ...words.slice(2)];
+    else if (PREFIXES.has(word) || /^\w+\+?=/.test(word) || (env && word.startsWith("-")))
+      words = words.slice(env && /^-[uC]$/.test(word) ? 2 : 1);
+    else break;
+    env = word === "env" || (env && word.startsWith("-"));
+  }
+  return words;
+};
+
+/**
  * The script `workit check … -- <cmd>` runs, so the gates judge it as if it
  * ran raw: the `--shell` string, a `bash -c` script, or the argv. Other
  * workit verbs stay exempt (null).
  */
 const wrappedScript = (input: string[]): string | null => {
-  let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+\+?=/.test(words[0])))
-    words = words.slice(1);
+  const words = pastLead(input);
   const tail = workitCheckTail(words);
   if (!tail) return null;
   if ("script" in tail) return tail.script;
@@ -147,9 +164,7 @@ const wrappedScript = (input: string[]): string | null => {
 
 /** The files one simple command edits: [] none, null unknown. */
 const editsOf = (input: string[]): string[] | null => {
-  let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+\+?=/.test(words[0])))
-    words = words.slice(1);
+  const words = pastLead(input);
   const [verb, ...args] = words;
   const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
   if (!name || name === "workit" || (name === "npx" && args.some((item) => /workit/.test(item))))
@@ -315,7 +330,27 @@ const strip = (text: string, python: boolean): string =>
   );
 
 /**
- * Whether inline Python or Node code may change files: SPAWNS, a one-argument
+ * A call on what an expression returns (`Object.values(fs).find(…)(…)`,
+ * `(0, f)(…)`): a call reached by a computed name. A function literal called
+ * at once (`(() => …)()`, `(async function () { … })()`, `(lambda: …)()`) is not.
+ */
+const callsResult = (code: string): boolean =>
+  [...code.matchAll(/\)\s*\(/g)].some(({ index }) => {
+    let at = index;
+    for (let depth = 0; at >= 0; at--) {
+      depth += code[at] === ")" ? 1 : code[at] === "(" ? -1 : 0;
+      if (!depth) break;
+    }
+    // A call's own result (`f(…)(…)`), or a group other than a function literal.
+    return (
+      /[\w$\])]\s*$/.test(code.slice(0, Math.max(at, 0))) ||
+      !/^\(\s*(?:async\b|function\b|lambda\b|\(?[\w$,\s]*\)?\s*=>)/.test(code.slice(at))
+    );
+  });
+
+/**
+ * Whether inline Python or Node code may change files: SPAWNS, a call on a returned value
+ * (`callsResult`), a one-argument
  * `.replace(` (a path's rename: a string's takes two), or a word left by
  * `strip` that names a call in MUTATING_CALLS (bar a list's `append` and `copy`).
  */
@@ -328,6 +363,7 @@ const writesIn = (text: string, python = false): boolean => {
     SPAWNS.test(text) ||
     /['"`]|\.replace\s*\((?![^()]*,)/.test(bare) ||
     /\\[ux]/.test(text) ||
+    callsResult(bare) ||
     [...bare.matchAll(/[\w$]+/g)].some(
       ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
     )
@@ -467,14 +503,11 @@ const opaqueWrites = (
   fed?: string | null,
   loads = false,
 ): string[] | null => {
-  let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+\+?=/.test(words[0]))) {
-    if (words[0] === "xargs") {
-      let at = 1;
-      while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
-      return runsWriter(words.slice(at)) ? ["."] : null;
-    }
-    words = words.slice(1);
+  const words = pastLead(input);
+  if (words[0] === "xargs") {
+    let at = 1;
+    while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
+    return runsWriter(words.slice(at)) ? ["."] : null;
   }
   const [verb, ...args] = words;
   const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
@@ -1880,6 +1913,18 @@ const segmentTargets = (
                   ? placeholderIn(path.dirname(resolved), path.basename(resolved))
                   : resolved,
             );
+      // A shell reading its script on stdin (`bash <<'EOF'`, `sh -s`, `bash -`) runs the heredoc:
+      // it is read like the command itself, as a judge's is.
+      const shell = (runner?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+      if (
+        depth < 4 &&
+        segment.stdin &&
+        SCRIPT_SHELLS.has(shell) &&
+        shellScript(words.slice(ran)) === null &&
+        /^(?:-|\/dev\/stdin)?$/.test(scriptArgs(shell, words.slice(ran + 1)).named ?? "")
+      )
+        for (const script of segment.stdin)
+          targets.push(...segmentTargets(runIn, script, dialect, depth + 1, strict, vars));
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);
       // A hard link is a second name for its source. The registry guard judges every

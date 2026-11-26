@@ -172,7 +172,8 @@ const stripPrefixes = (input: string[]): { words: string[]; env: Record<string, 
   for (;;) {
     const first = words[0];
     if (first === undefined) return { words, env };
-    const assignment = ASSIGNMENT.exec(first);
+    // `NAME+=value` before a command is an assignment too.
+    const assignment = ASSIGNMENT.exec(first.replace(/^(\w+)\+=/, "$1="));
     if (assignment) {
       if (GIT_CONFIG_ENV.test(assignment[1])) env[assignment[1]] = assignment[2];
       words = words.slice(1);

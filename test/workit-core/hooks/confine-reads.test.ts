@@ -395,3 +395,46 @@ test("Given a verifier or an implementer, When an inline script hides a write in
     "workit worktree confinement: implementer impl-reads",
   );
 });
+
+// #880 follow-ups (coordinator, round 2): a shell fed a heredoc, env's assignment words, a call on
+// a returned value, and a commit in the lead's checkout.
+test("Given an implementer outside its worktree or a verifier, When a shell reads a heredoc that writes, env sets an odd name, a returned value is called or git commits, Then it is denied; the read-only forms run", () => {
+  const writers = [
+    "bash <<'EOF'\nrm -rf src\nEOF",
+    "sh <<EOF\ntouch src/x\nEOF",
+    "bash -s <<'EOF'\nrm -rf src\nEOF",
+    "zsh <<'EOF'\necho a > src/x\nEOF",
+    "python3 - <<EOF\nopen('x','w').write('a')\nEOF",
+    "python3 <<'EOF'\nopen('x','w').write('a')\nEOF",
+    "node <<'EOF'\nrequire('fs').writeFileSync('x','a')\nEOF",
+    "env 'A b=1' rm -rf src",
+    "env -i 'A b=1' X=2 rm -rf src",
+    "env -u HOME rm -rf src",
+    "env -S 'rm -rf src'",
+    `node -e "Object.values(require('fs')).find(f => f.name.startsWith('write'+'File'))('x','a')"`,
+    `node -e "(0, Object.values(require('fs')).find(f => f.name > 'w'))('x','a')"`,
+    "git commit -m x",
+    "A+=1 git commit -m x",
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  const reads = [
+    "bash <<'EOF'\nls src\nEOF",
+    "env 'A b=1' ls src",
+    "env -i ls src",
+    `node -e "console.log((() => 1)())"`,
+    `node -e "(async () => { console.log(require('./package.json').name) })()"`,
+    `python3 -c "print((lambda: 1)())"`,
+  ];
+  allowed(verifier, reads);
+  allowed(
+    implementer,
+    reads.map((command) => `cd ${lead} && ${command}`),
+  );
+  // In its own worktree the implementer's writes are its own.
+  allowed(implementer, ["bash <<'EOF'\ntouch x\nEOF", "env 'A b=1' touch x"]);
+});
