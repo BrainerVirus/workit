@@ -21,6 +21,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -170,6 +171,33 @@ for await (const chunk of process.stdin) payload += String(chunk);
 const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
 const WORKIT_DELIVERY =
   /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
+// A subagent's `workit` call gets its agent stamp in the runtime (src/agent-stamp.ts, #883).
+const WORKIT_CALL = /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:\s|$)/;
+// A command that may set, unset or clear an identity variable goes to the
+// runtime's identity guard (hooks/identity-env.ts, #883): `NAME=`, `env -u`, `env -i`.
+// A `workit` call beside env or a declare builtin: the guard reads their arguments.
+const ENV_BUILTIN = /\b(?:env|unset|export|declare|typeset|local|readonly)\b/;
+const IDENTITY_ENV =
+  /WORKIT_(?:AGENT_ID|HOST|SESSION_ID|SESSION_TOKEN)|\benv\b[^\n;&|]*\s(?:-[a-z]*i|--ignore-environment|-)(?:\s|$)/;
+// A lead's `workit` call goes too while a subagent's stamp waits to be claimed
+// (its call at a permission prompt, say): the runtime stamps the lead's call,
+// so one argv from two actors is ambiguous and neither claims the other's id.
+const agentStampPending = (session) => {
+  try {
+    const dir = path.join(
+      stateDir(),
+      "agent-stamps",
+      createHash("sha256").update(String(session)).digest("hex").slice(0, 32),
+    );
+    const now = Date.now();
+    return readdirSync(dir).some(
+      (name) =>
+        name.split(".")[1] !== "" && now - statSync(path.join(dir, name)).mtimeMs <= 120_000,
+    );
+  } catch {
+    return false;
+  }
+};
 // The runtime moves the verb first (`cd <dir> && workit …`, `workit --cwd
 // <dir> <verb>`) so Workit's enumerated allow rules match (hooks/cwd-normalize.ts).
 const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*--cwd[\s=])/;
@@ -397,7 +425,7 @@ const reachTests = (dirs) => {
     file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
-      /^(?:issued[^\\/]*|approvals|verdicts|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
+      /^(?:issued[^\\/]*|approvals|verdicts|agent-stamps|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
         path.relative(state, file),
       )) ||
     repoLedger(file);
@@ -529,7 +557,7 @@ const mentionsGuarded = (text) => {
   // As written, and with quotes and backslashes gone (`work""spaces.json`, `work\spaces.json`).
   return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
     (all) =>
-      /issued|approvals|workspaces\.json/.test(all) ||
+      /issued|approvals|agent-stamps|workspaces\.json/.test(all) ||
       [tail(stateDir()), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some(
         (part) => all.includes(part),
       ),
@@ -750,6 +778,9 @@ const fastAllow = (() => {
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (
         WORKIT_DELIVERY.test(command) ||
+        (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
+        IDENTITY_ENV.test(command.replace(/['"\\]/g, "")) ||
+        (WORKIT_CALL.test(command) && ENV_BUILTIN.test(command)) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         WORKIT_INLINE_ASK.test(command) ||
@@ -852,6 +883,33 @@ const settleBudget = () => {
   }
 };
 settleBudget();
+
+// A finished `workit` call's unclaimed agent stamps go (copy of src/agent-stamp.ts
+// dropAgentStamps): a background call may still claim its own, so it keeps them.
+const dropStamps = () => {
+  try {
+    const value = parsed;
+    const command = value?.tool_input?.command;
+    if (
+      value?.hook_event_name !== "PostToolUse" ||
+      typeof command !== "string" ||
+      typeof value.session_id !== "string" ||
+      typeof value.tool_use_id !== "string" ||
+      value.tool_input.run_in_background === true ||
+      !WORKIT_CALL.test(command) ||
+      /(?:^|[^&<>])&(?![&>])/u.test(command)
+    )
+      return;
+    const sha = (text) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+    const dir = path.join(stateDir(), "agent-stamps", sha(value.session_id));
+    const tag = `.${sha(value.tool_use_id).slice(0, 8)}-`;
+    for (const name of readdirSync(dir))
+      if (name.includes(tag)) rmSync(path.join(dir, name), { force: true });
+  } catch {
+    // No stamp dir: nothing to drop.
+  }
+};
+dropStamps();
 
 // A SubagentStop loads the runtime only when its last message may be a
 // provider usage limit (W2.19: hooks/handle.ts marks the provider exhausted).

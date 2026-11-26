@@ -123,7 +123,7 @@ const reachTests = (dirs: ReachDirs) => {
     file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
-      /^(?:issued[^\\/]*|approvals|verdicts|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
+      /^(?:issued[^\\/]*|approvals|verdicts|agent-stamps|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
         path.relative(state, file),
       )) ||
     repoLedger(file);

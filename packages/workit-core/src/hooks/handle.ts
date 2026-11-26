@@ -53,6 +53,8 @@ import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
 import { ytrackGate } from "./ytrack-guard";
 import { exitPipeGate } from "./exit-pipe";
+import { dropAgentStamps, noteAgentStamps } from "../agent-stamp";
+import { identityEnvChange, identityEnvDeny } from "./identity-env";
 import {
   confineImplementer,
   confineImplementerShell,
@@ -74,6 +76,9 @@ export type HookDeps = {
 };
 
 const usable = (value: Support) => value === "native" || value === "partial";
+/** Hosts whose hooks stamp each `workit` call with its agent (#883): Claude Code, Codex. */
+const stampsAgents = (descriptor: HostDescriptor): boolean =>
+  descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool);
 const NONE: HookDecision = { kind: "none" };
 
 const resendsOnChange = (descriptor: HostDescriptor): boolean =>
@@ -366,6 +371,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         ? shellGate(input.cwd, event.command, owner, event.dialect)
         : NONE;
       if (gate.kind === "deny") return gate;
+      // Where hooks stamp the agent (#883), the identity variables are the host's.
+      const identity =
+        canDeny && stampsAgents(descriptor)
+          ? identityEnvChange(event.command, event.dialect)
+          : null;
+      if (identity) return { kind: "deny", reason: identityEnvDeny(identity), unblock: null };
       // A heavy command runs under the machine lease: rewritten where the
       // host can replace the command, else denied with the exact rewrite.
       // Every gate above passed on the original command (ruling mvid5onk).
@@ -405,6 +416,16 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         !lease && input.host === "claude_code"
           ? workitBypassFlag(event.command, event.dialect)
           : null;
+      // Each `workit` call carries its agent to the CLI (#883): no host puts a
+      // subagent's id in its shell, and a changed command loses its allow rule.
+      if (stampsAgents(descriptor))
+        noteAgentStamps(
+          process.env,
+          input.session.id,
+          input.session.agentId,
+          lease?.command ?? cwdCommand ?? event.command,
+          { dialect: event.dialect, toolUseId: event.toolUseId },
+        );
       if (bypass) return { kind: "ask", reason: bypass };
       const rewrittenTo = lease?.command ?? cwdCommand;
       const rewritten = (text: string | null): HookDecision =>
@@ -445,6 +466,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "shell.post":
       if (usable(descriptor.events["shell.post"].support))
         rawGitPost(input, event.command, callKey(event.toolUseId, event.command));
+      if (stampsAgents(descriptor))
+        dropAgentStamps(process.env, input.session.id, event.toolUseId, event.command);
       return NONE;
     case "write.pre": {
       if (!usable(descriptor.events["write.pre"].support)) return NONE;

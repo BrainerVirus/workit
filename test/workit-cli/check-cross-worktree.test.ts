@@ -298,6 +298,16 @@ test("Given a derived verifier session S:a, Then it is held to the runs its agen
   expect(recordedOn(verdict(root, "s-lead:a3"))).toBe(moved);
 });
 
+test("Given an OpenCode or Pi child whose shell carries S:c whole, When it records as S:c, Then it is held to its own runs and the lead's plain S is not", () => {
+  const root = featureRepo();
+  const tested = headOf(root);
+  checkRow(root, { session: "s-lead:c1" }, tested);
+  const moved = codeChange(root);
+  refusedNaming(verdict(root, "s-lead:c1"), tested, moved);
+  expect(recordedOn(verdict(root, "s-lead"))).toBe(moved);
+  expect(recordedOn(verdict(root, "s-lead:c2"))).toBe(moved);
+});
+
 test("Given today's rows (no host stamps WORKIT_AGENT_ID, so a subagent's runs carry the lead's S and no agent id), When a derived verifier S:a records, Then it is not held by them (it records)", () => {
   const root = featureRepo();
   checkRow(root, { session: "s-lead" }, headOf(root));
