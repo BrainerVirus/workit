@@ -603,7 +603,8 @@ test("Given inline code that imports past the tables, When a judge is refused, T
   expect(what).toContain(
     "`import timeit` is outside the modules Workit reads in inline code (json, re, pathlib, os.path, fs reads…)",
   );
-  expect(retry).toBe(`Retry as: cd ${scratch} && ${plain}`);
+  // A retry runs in a POSIX shell (Git Bash on Windows): the scratch dir with forward slashes.
+  expect(retry).toBe(`Retry as: cd ${scratch.replaceAll("\\", "/")} && ${plain}`);
   const reads = verifier(
     `node -e "const http = require('http'); console.log(require('./package.json'))"`,
   )?.permissionDecisionReason?.split("\n");
