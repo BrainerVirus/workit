@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Checks running without a slot no longer starve an aged suite waiting on memory; a killed or hung one is pruned or reaped (`workit lock status` shows `stuck?`, `workit lock reap` frees it); wait estimates count no slot for short or io waiters; `workit lock`, `workit run` and `workit fanout plan` read a check's own `heavy`.
 
+### Changed
+
+- hook bundles are about 60 KB smaller: hook-loaded schemas validate with zod/mini, and the operation request schemas no longer load in hooks.
 ## [2.22.3] - 2026-11-25
 
 ### Fixed
