@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- on every host, a verdict (--self included) or commit is refused as foreign_host_session when two of OPENCODE_SESSION_ID, PI_SESSION_ID and CODEX_THREAD_ID are set, or when one names another host than the shell's own (WORKIT_HOST, Claude Code's marks, Cursor's CURSOR_AGENT), so prefixing OPENCODE_SESSION_ID=nobody-N in a Codex, Pi or Cursor shell no longer records an independent verdict (#986).
 - in a Claude Code shell, OPENCODE_SESSION_ID, PI_SESSION_ID or CODEX_THREAD_ID no longer let a session record a verdict or commit as an invented nested-host session; the identity guard also denies changing those variables, CLAUDECODE or CLAUDE_CODE_ENTRYPOINT beside a workit call (#981).
 - Removing a worker's scratch directory now retries a busy or racing directory under Bun as well as Node; Bun accepted the rmSync retry options but never retried.
 - `workit changelog apply` writes CHANGELOG.md through a temp file and a rename, keeping its mode, CRLF line endings and symlinks, and the roll before it reads every release tag's changelog in two batched git calls, so `pr create --changelog` no longer pays a git process per tag.
