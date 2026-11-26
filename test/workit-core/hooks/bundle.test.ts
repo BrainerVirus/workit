@@ -199,8 +199,10 @@ const HOOK_ENTRIES = [
 // guard's state and config dir names, the CLI under its other names and renamed links, prefix
 // assignments scoped to their command (identity and host names too), PowerShell assignments only,
 // cmd `set`, the session-start pin, the pinned registry read and the 8.3-safe temp-dir check take
-// core run from 587,104 B to MEASURED. The ceiling is core run plus 2 KiB.
-const BUDGET = 579_532;
+// core run from 587,104 B to 590,752 B (+3,648 B; Claude Code 584,109 B, Codex 572,433 B, Cursor
+// 571,827 B). The ceiling
+// is core run plus 2 KiB.
+const BUDGET = 592_800;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
