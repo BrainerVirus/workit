@@ -43,7 +43,7 @@ import {
   workitInvocations,
 } from "./raw-git";
 import { segmentsOf, type ShellDialect } from "./shell-words";
-import { EXEMPT_LOADER, posixLoaderName } from "./windows-reads";
+import { EXEMPT_LOADER, GIT_CONFIG_ENV, LOADER_ENV } from "./windows-reads";
 import {
   configWrites,
   inlineWhy,
@@ -821,25 +821,22 @@ const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
   return url !== undefined && literalIn(url, repo, true);
 };
 
-/** Names that point git or its pager at config or code Workit does not read: `$HOME/.gitconfig`, git/config under an `XDG_*` dir, `LESSOPEN`. */
-const JUDGE_CONFIG_ENV = /^(?:HOME|XDG_\w+|LESS\w*)$/;
-
 /**
  * Whether a judge's git may run after assignment `word` (a prefix, `env`'s or
  * an export's): an exempt loader value, or a name outside LOADER_ENV and
- * JUDGE_CONFIG_ENV whose value the shell does not expand.
+ * GIT_CONFIG_ENV (in any case, as Windows reads them) whose value the shell does not expand.
  */
 const judgeEnvAllowed = (word: string): boolean => {
   if (EXEMPT_LOADER.test(word)) return true;
   const [, name = "", value = ""] = /^(\w+)\+?=([\s\S]*)$/.exec(word) ?? [];
-  return !posixLoaderName(name) && !JUDGE_CONFIG_ENV.test(name) && !/[$`]/.test(value);
+  return !LOADER_ENV.test(name) && !GIT_CONFIG_ENV.test(name) && !/[$`]/.test(value);
 };
 
 /**
  * Why a judge may not run the git in `command` (#790): a verb or option
  * outside `GIT_VERBS`, a wrapper but env (assignments only), timeout, nice,
  * time or command, an environment that sets a LOADER_ENV name (but
- * PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0) or a JUDGE_CONFIG_ENV one,
+ * PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0) or a GIT_CONFIG_ENV one,
  * `-c`, a source outside scratch and the judged repository, or
  * `--git-dir`/`--work-tree` outside scratch. A `status` only refreshes the
  * index's stat cache, never content, refs or config. Null when it may.

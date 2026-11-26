@@ -179,17 +179,18 @@ const READ_MEMBERS =
  * editor, the search paths (`PATH`, `PATHEXT`, `PSModulePath`, `NODE_PATH`),
  * a dynamic loader's, an interpreter's or runtime's startup options (Node,
  * Bun, Python, Perl, Ruby, the JVM, .NET), cargo's and rustc's wrappers,
- * npm's config, a shell's startup file or prompt hook.
+ * npm's config, a shell's startup file or prompt hook. Matched in any case on
+ * every platform: Git Bash, PowerShell and cmd read Windows names that way.
  */
 export const LOADER_ENV =
   /^(?:GIT_\w*|SSH_ASKPASS(?:_REQUIRE)?|PAGER|EDITOR|VISUAL|PATH|PATHEXT|PSModulePath|LD_\w*|DYLD_\w*|NODE_OPTIONS|NODE_PATH|BUN_OPTIONS|npm_config_\w*|PYTHON\w*|BASH_ENV|ENV|PROMPT_COMMAND|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|RUSTC_(?:WORKSPACE_)?WRAPPER|CARGO_\w*|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|DOTNET_STARTUP_HOOKS|COMPLUS_\w*|CORECLR_\w*)$/i;
 
-/** LOADER_ENV as a POSIX shell spells it: names are case-sensitive, but npm reads `npm_config_*` in any case. */
-const POSIX_LOADER_ENV = new RegExp(LOADER_ENV.source);
-
-/** Whether a POSIX shell's name `name` is in LOADER_ENV. */
-export const posixLoaderName = (name: string): boolean =>
-  POSIX_LOADER_ENV.test(name) || /^npm_config_\w*$/i.test(name);
+/**
+ * Names that point git or its pager at config or code Workit does not read:
+ * a home dir's `.gitconfig` (`HOME`, `USERPROFILE`, `HOMEDRIVE`/`HOMEPATH`),
+ * git/config under an `XDG_*` dir, `LESSOPEN`. A judge's git is denied after one.
+ */
+export const GIT_CONFIG_ENV = /^(?:HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|XDG_\w+|LESS\w*)$/i;
 
 /** An assignment word whose loader value runs nothing: no pager, no lock (worktree-confine.ts judgeGit). */
 export const EXEMPT_LOADER = /^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0)$/;
@@ -253,7 +254,7 @@ export const powershellTextWriter = (text: string): string | null => {
   if (statics) return `${statics[1]}::${statics[2]}`;
   // An environment that changes what a later program runs or loads.
   for (const [, name] of code.matchAll(/\$\{?env:(\w+)\}?\s*[-+]?=/gi))
-    if (LOADER_ENV.test(name)) return `$env:${name} =`;
+    if (LOADER_ENV.test(name) || GIT_CONFIG_ENV.test(name)) return `$env:${name} =`;
   for (const [, name] of code.matchAll(/\.([A-Za-z_]\w*)\(/g))
     if (!READ_METHODS.test(name)) return `.${name}()`;
   const member = /\.([A-Za-z_]\w*)\s*[-+*/%]?=/.exec(code);

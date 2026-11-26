@@ -473,11 +473,50 @@ test("Given a Bash or PowerShell assignment of an askpass, a cargo, JVM, .NET, B
     names.map((name) => `${name}=x git status`),
     VERIFIER,
   );
-  // Case matters to a POSIX shell for every name but npm's.
-  allowed(implementer, [
-    `cd ${lead} && ssh_askpass=x git status`,
-    `cd ${lead} && GIT_PAGER=cat PAGER=cat GIT_OPTIONAL_LOCKS=0 git log`,
-  ]);
+  allowed(implementer, [`cd ${lead} && GIT_PAGER=cat PAGER=cat GIT_OPTIONAL_LOCKS=0 git log`]);
+});
+
+// #970 review: Windows reads environment names in any case, so every loader name counts in any case.
+test("Given a loader name in another case, When a judge or an implementer outside its worktree sets it before a program, Then it is denied", () => {
+  const names = ["path", "git_pager", "ld_preload", "node_options", "ssh_askpass", "PSMODULEPATH"];
+  denied(
+    implementer,
+    names.map((name) => `cd ${lead} && ${name}=x git status`),
+    IMPLEMENTER,
+  );
+  denied(
+    verifier,
+    names.map((name) => `${name}=x git status`),
+    VERIFIER,
+  );
+  deniedInLead(["PSMODULEPATH=x pwsh -c Get-ChildItem", "env node_options=x node -v"]);
+  deniedInLead(names.map((name) => `pwsh -c '$env:${name} = "x"; git status'`));
+});
+
+// #970 review: a judge's PowerShell git sees the same denied names as its Bash git.
+test("Given a judge's PowerShell, When it sets a home, XDG, less, editor or visual name before git, Then it is denied as in Bash", () => {
+  const names = [
+    "HOME",
+    "USERPROFILE",
+    "HOMEPATH",
+    "XDG_CONFIG_HOME",
+    "LESSOPEN",
+    "LESS",
+    "EDITOR",
+    "VISUAL",
+    "home",
+  ];
+  denied(
+    pwshVerifier,
+    names.flatMap((name) => [`$env:${name}="src"; git status`, `$env:${name} = "src"; git log`]),
+    "verifier ver-win-ps",
+  );
+  denied(
+    verifier,
+    names.flatMap((name) => [`pwsh -c '$env:${name}="src"; git status'`, `${name}=src git status`]),
+    VERIFIER,
+  );
+  allowed(pwshVerifier, [`$env:FOO = "x"; git status`]);
 });
 
 // #967 residuals: `pwsh -wd X` moves to X before the script runs; a pipe name and -Interactive are benign.

@@ -49,7 +49,7 @@ import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
 import {
   CMD_VAR,
   EXEMPT_LOADER,
-  posixLoaderName,
+  LOADER_ENV,
   powershellTextWriter,
   windowsStatementWriter,
 } from "./windows-reads";
@@ -1618,7 +1618,7 @@ const loaderAssignment = (words: readonly string[]): string | undefined => {
     // The values a judge's git may take (worktree-confine.ts judgeGit): no program, no lock.
     if (EXEMPT_LOADER.test(word)) continue;
     if (name !== undefined) {
-      if (posixLoaderName(name)) return word.split("=")[0];
+      if (LOADER_ENV.test(name)) return word.split("=")[0];
     } else if (!DECLARERS.has(word) && word !== "env" && !word.startsWith("-")) return undefined;
   }
   return undefined;
