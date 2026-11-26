@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   type Exec,
+  gitExec,
   inferTagPrefix,
   parseGroups,
   releaseBlock,
@@ -68,10 +69,15 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
-function makeRepo(
-  history: Array<{ text: string; tag?: string; date: string }>,
-  file = "CHANGELOG.md",
-) {
+/** One commit: `text` (null deletes the file), tagged `tag` (annotated when asked). */
+interface Step {
+  text: string | Buffer | null;
+  tag?: string;
+  annotated?: boolean;
+  date: string;
+}
+
+function makeRepo(history: Step[], file = "CHANGELOG.md") {
   const root = mkdtempSync(path.join(os.tmpdir(), "wk-clroll-"));
   cleanups.push(() => rmSync(root, { recursive: true, force: true }));
   const globalConfig = path.join(root, ".gitconfig");
@@ -104,10 +110,12 @@ function makeRepo(
   ])
     git(["config", key, value]);
   for (const step of history) {
-    writeFileSync(path.join(cwd, file), step.text);
-    git(["add", file]);
-    git(["commit", "-q", "-m", "docs: changelog"], step.date);
-    if (step.tag) git(["tag", step.tag], step.date);
+    if (step.text === null) rmSync(path.join(cwd, file), { force: true });
+    else writeFileSync(path.join(cwd, file), step.text);
+    git(["add", "-A", "--", file]);
+    git(["commit", "-q", "--allow-empty", "-m", "docs: changelog"], step.date);
+    if (step.tag)
+      git(step.annotated ? ["tag", "-a", "-m", step.tag, step.tag] : ["tag", step.tag], step.date);
   }
   const read = () => readFileSync(path.join(cwd, file), "utf8");
   return { cwd, read };
@@ -408,3 +416,119 @@ test("Given a plain v repo, Then the inferred prefix stays v; with no heading a 
   // Bare x.y.z tags are a family too.
   expect(inferTagPrefix(tagsExec(["1.0.0", "v0.9.0"]), headings("1.0.0"))).toBe("");
 });
+
+// tagSnapshots reads every tag's changelog through two batched `git cat-file`
+// calls and parses a section once across tags. Property: over seeded random
+// histories it returns what reading each tag alone with `git show` returns.
+
+/** mulberry32: a seeded generator, so a failing history replays from its seed. */
+const seeded = (seed: number): (() => number) => {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const WORDS = [
+  "retry",
+  "Logs",
+  "timeout",
+  "zürich",
+  "naïve",
+  "日本語",
+  "emoji 🎉",
+  "step",
+  "cache",
+];
+
+/**
+ * `tags` commits that add, rewrap, drop and release entries, some CRLF, some
+ * untagged, annotated or with the file deleted; `notUtf8` makes one tag's
+ * changelog Latin-1.
+ */
+function randomHistory(seed: number, tags: number, notUtf8 = false): Step[] {
+  const next = seeded(seed);
+  const pick = <T>(items: T[]): T => items[Math.floor(next() * items.length)];
+  const sentence = () =>
+    Array.from({ length: 3 + Math.floor(next() * 12) }, () => pick(WORDS)).join(" ");
+  let unreleased: string[] = [];
+  const released: string[] = [];
+  const steps: Step[] = [];
+  for (let i = 0; i < tags; i++) {
+    for (let n = Math.floor(next() * 3); n >= 0; n--)
+      unreleased.push(next() < 0.2 ? `- ${sentence()}\n  ${sentence()}` : `* ${sentence()}`);
+    if (unreleased.length > 1 && next() < 0.2) {
+      const at = Math.floor(next() * unreleased.length);
+      unreleased[at] = (unreleased[at] ?? "").replace(/ /, "\n  ");
+    }
+    if (unreleased.length > 1 && next() < 0.1) unreleased.splice(0, 1);
+    const version = `1.${i}.0`;
+    if (next() < 0.3) {
+      released.unshift(
+        `## [${version}] - 2026-01-01\n\n### ${pick(["Added", "Fixed"])}\n\n${unreleased.join("\n")}\n`,
+      );
+      unreleased = [];
+    }
+    let text: string | Buffer | null =
+      `# Changelog\n\n## [Unreleased]\n\n### Added\n\n${unreleased.join("\n")}\n\n${released.join("\n")}`;
+    if (next() < 0.2) text = text.replace(/\n/g, "\r\n");
+    if (next() < 0.05) text = null;
+    if (notUtf8 && i === Math.floor(tags / 2))
+      text = Buffer.from(`${text ?? ""}- caf\u00e9\n`, "latin1");
+    const day = String(1 + (i % 28)).padStart(2, "0");
+    steps.push({
+      text,
+      date: `2026-${String(1 + Math.floor(i / 28)).padStart(2, "0")}-${day}`,
+      ...(next() < 0.85 || text instanceof Buffer
+        ? { tag: `v${version}`, annotated: next() < 0.3 }
+        : {}),
+    });
+  }
+  return steps;
+}
+
+/** What `git show` of one tag alone gives: for-each-ref narrowed to it, no batch, no shared cache. */
+const oneTagAlone =
+  (exec: Exec, row: string): Exec =>
+  (cmd, args, input) => {
+    if (args[0] === "cat-file") throw new Error("no batch");
+    return args[0] === "for-each-ref" ? `${row}\n` : exec(cmd, args, input);
+  };
+
+test.each([
+  [1, false],
+  [7, false],
+  [42, true],
+])(
+  "Given seeded random history %i (Latin-1 tag: %p), Then tagSnapshots equals reading each tag alone, and a UTF-8 history spawns no git show",
+  (seed, notUtf8) => {
+    const repo = makeRepo(randomHistory(seed, 45, notUtf8));
+    const real = gitExec(repo.cwd);
+    const calls: string[] = [];
+    const counted: Exec = (cmd, args, input) => {
+      calls.push(args[0] ?? "");
+      return real(cmd, args, input);
+    };
+    const batched = tagSnapshots(counted, "v");
+    expect(batched.length).toBeGreaterThan(20);
+    for (const snapshot of batched) {
+      const [alone] = tagSnapshots(oneTagAlone(real, `${snapshot.tag}\t${snapshot.date}`), "v");
+      expect({ ...snapshot, keys: [...snapshot.keys].toSorted() }).toEqual({
+        ...alone,
+        keys: [...(alone?.keys ?? [])].toSorted(),
+      } as never);
+    }
+    if (notUtf8) expect(calls.filter((c) => c === "show").length).toBe(batched.length);
+    else expect(calls).toEqual(["for-each-ref", "cat-file", "cat-file"]);
+    const roll = (exec: Exec) =>
+      runChangelogRoll({ cwd: repo.cwd, tagPrefix: "v", write: false, exec });
+    const noBatch: Exec = (cmd, args, input) => {
+      if (args[0] === "cat-file") throw new Error("no batch");
+      return real(cmd, args, input);
+    };
+    expect(roll(real)).toEqual(roll(noBatch));
+  },
+);
