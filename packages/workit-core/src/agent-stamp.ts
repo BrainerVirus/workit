@@ -49,12 +49,13 @@ export const noteAgentStamps = (
   session: string | null,
   agentId: string | null,
   command: string,
-  dialect?: ShellDialect,
+  options: { dialect?: ShellDialect; toolUseId?: string | null } = {},
 ): void => {
   if (!session || !command.includes("workit") || (agentId !== null && !AGENT_ID.test(agentId)))
     return;
-  const calls = workitCalls(command, dialect);
+  const calls = workitCalls(command, options.dialect);
   if (!calls.length) return;
+  const call = options.toolUseId ? callTag(options.toolUseId) : randomBytes(4).toString("hex");
   try {
     const dir = stampDir(env, session);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -62,17 +63,45 @@ export const noteAgentStamps = (
     for (const name of fs.readdirSync(dir))
       if (now - fs.statSync(path.join(dir, name)).mtimeMs > STAMP_TTL_MS)
         fs.rmSync(path.join(dir, name), { force: true });
-    for (const argv of calls)
+    calls.forEach((argv, index) =>
       fs.writeFileSync(
-        path.join(
-          dir,
-          `${hash(argv.join("\0"))}.${agentId ?? ""}.${randomBytes(4).toString("hex")}`,
-        ),
+        path.join(dir, `${hash(argv.join("\0"))}.${agentId ?? ""}.${call}-${index}`),
         "",
-        { flag: "wx" },
-      );
+      ),
+    );
   } catch {
     // Hooks fail open: the call runs unstamped.
+  }
+};
+
+/** The tool call a stamp belongs to, in its file name (the Claude Code launcher holds a copy). */
+const callTag = (toolUseId: string): string => hash(toolUseId).slice(0, 8);
+
+/**
+ * Post-tool: the stamps a finished call left unclaimed (a `workit` in a branch
+ * that did not run) go, so they cannot make a later call of that argv
+ * ambiguous. A call that may still be running (a background `&`) keeps them.
+ */
+export const dropAgentStamps = (
+  env: NodeJS.ProcessEnv,
+  session: string | null,
+  toolUseId: string | null,
+  command: string,
+): void => {
+  if (
+    !session ||
+    !toolUseId ||
+    !command.includes("workit") ||
+    /(?:^|[^&<>])&(?![&>])/u.test(command)
+  )
+    return;
+  try {
+    const dir = stampDir(env, session);
+    const tag = `.${callTag(toolUseId)}-`;
+    for (const name of fs.readdirSync(dir))
+      if (name.includes(tag)) fs.rmSync(path.join(dir, name), { force: true });
+  } catch {
+    // No stamp dir: nothing to drop.
   }
 };
 

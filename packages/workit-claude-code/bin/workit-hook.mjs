@@ -21,6 +21,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -399,7 +400,7 @@ const reachTests = (dirs) => {
     file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
-      /^(?:issued[^\\/]*|approvals|verdicts|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
+      /^(?:issued[^\\/]*|approvals|verdicts|agent-stamps|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
         path.relative(state, file),
       )) ||
     repoLedger(file);
@@ -531,7 +532,7 @@ const mentionsGuarded = (text) => {
   // As written, and with quotes and backslashes gone (`work""spaces.json`, `work\spaces.json`).
   return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
     (all) =>
-      /issued|approvals|workspaces\.json/.test(all) ||
+      /issued|approvals|agent-stamps|workspaces\.json/.test(all) ||
       [tail(stateDir()), tail(workitConfigDir(process.env)), tail(workitConfigDir({}))].some(
         (part) => all.includes(part),
       ),
@@ -855,6 +856,33 @@ const settleBudget = () => {
   }
 };
 settleBudget();
+
+// A finished `workit` call's unclaimed agent stamps go (copy of src/agent-stamp.ts
+// dropAgentStamps): a background call may still claim its own, so it keeps them.
+const dropStamps = () => {
+  try {
+    const value = parsed;
+    const command = value?.tool_input?.command;
+    if (
+      value?.hook_event_name !== "PostToolUse" ||
+      typeof command !== "string" ||
+      typeof value.session_id !== "string" ||
+      typeof value.tool_use_id !== "string" ||
+      value.tool_input.run_in_background === true ||
+      !WORKIT_CALL.test(command) ||
+      /(?:^|[^&<>])&(?![&>])/u.test(command)
+    )
+      return;
+    const sha = (text) => createHash("sha256").update(text).digest("hex").slice(0, 32);
+    const dir = path.join(stateDir(), "agent-stamps", sha(value.session_id));
+    const tag = `.${sha(value.tool_use_id).slice(0, 8)}-`;
+    for (const name of readdirSync(dir))
+      if (name.includes(tag)) rmSync(path.join(dir, name), { force: true });
+  } catch {
+    // No stamp dir: nothing to drop.
+  }
+};
+dropStamps();
 
 // A SubagentStop loads the runtime only when its last message may be a
 // provider usage limit (W2.19: hooks/handle.ts marks the provider exhausted).

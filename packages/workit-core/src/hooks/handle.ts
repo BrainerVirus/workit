@@ -53,7 +53,7 @@ import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
 import { ytrackGate } from "./ytrack-guard";
 import { exitPipeGate } from "./exit-pipe";
-import { noteAgentStamps } from "../agent-stamp";
+import { dropAgentStamps, noteAgentStamps } from "../agent-stamp";
 import {
   confineImplementer,
   confineImplementerShell,
@@ -414,7 +414,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
           input.session.id,
           input.session.agentId,
           lease?.command ?? cwdCommand ?? event.command,
-          event.dialect,
+          { dialect: event.dialect, toolUseId: event.toolUseId },
         );
       if (bypass) return { kind: "ask", reason: bypass };
       const rewrittenTo = lease?.command ?? cwdCommand;
@@ -456,6 +456,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "shell.post":
       if (usable(descriptor.events["shell.post"].support))
         rawGitPost(input, event.command, callKey(event.toolUseId, event.command));
+      if (descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool))
+        dropAgentStamps(process.env, input.session.id, event.toolUseId, event.command);
       return NONE;
     case "write.pre": {
       if (!usable(descriptor.events["write.pre"].support)) return NONE;

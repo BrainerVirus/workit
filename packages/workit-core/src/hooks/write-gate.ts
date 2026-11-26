@@ -332,7 +332,7 @@ const isConfigDir = (file: string): boolean =>
 /** Whether `file` is a config dir or a state registry root (`<state>/issued*`, `<state>/approvals`). */
 const isRoot = (file: string): boolean =>
   isConfigDir(file) ||
-  /^(?:issued[^\\/]*|approvals|verdicts)$/.test(
+  /^(?:issued[^\\/]*|approvals|verdicts|agent-stamps)$/.test(
     path.relative(canonical(resolveStateDir()), canonical(file)),
   );
 
@@ -2592,7 +2592,9 @@ const globbed = (cwd: string, target: string, state: string, configs: string[]):
   };
   let roots: string[] = [];
   try {
-    roots = readdirSync(state).filter((name) => /^(?:issued|approvals$|verdicts$)/.test(name));
+    roots = readdirSync(state).filter((name) =>
+      /^(?:issued|approvals$|verdicts$|agent-stamps$)/.test(name),
+    );
   } catch {
     // No state dir yet: no registry to hit.
   }
@@ -2618,10 +2620,14 @@ const guardedInodes = (state: string, configs: string[]): Map<string, Registry> 
   try {
     for (const dir of configs) for (const name of CONFIG_FILES) add(path.join(dir, name), "grants");
     for (const name of readdirSync(state))
-      if (/^(?:issued|approvals$|verdicts$)/.test(name))
+      if (/^(?:issued|approvals$|verdicts$|agent-stamps$)/.test(name))
         add(
           path.join(state, name),
-          name === "approvals" ? "approvals" : name === "verdicts" ? "ledger" : "issued",
+          name === "approvals"
+            ? "approvals"
+            : name === "verdicts" || name === "agent-stamps"
+              ? "ledger"
+              : "issued",
         );
     // A non-git folder's ledger (<state>/folders/<slug>/ledger).
     for (const slug of readdirSync(path.join(state, "folders")))
@@ -2757,7 +2763,12 @@ export const underRegistry = (
   const first = parts[0];
   if (first?.startsWith("issued")) return "issued";
   // The verdict store, or a non-git folder's ledger (<state>/folders/<slug>/ledger).
-  if (first === "verdicts" || (first === "folders" && parts[2] === "ledger")) return "ledger";
+  if (
+    first === "verdicts" ||
+    first === "agent-stamps" ||
+    (first === "folders" && parts[2] === "ledger")
+  )
+    return "ledger";
   return first === "approvals" ? "approvals" : null;
 };
 
@@ -2822,6 +2833,7 @@ export const unquotedWindowsRegistry = (
   const folders = `${state}/folders/`;
   const ledger = (at: string, named = false) =>
     at.includes(`${state}/verdicts`) ||
+    at.includes(`${state}/agent-stamps`) ||
     (named ? inRepoLedger(at) : /\/workit\/ledger(?:[/\s'"]|$)/.test(at)) ||
     at
       .split(folders)

@@ -8,7 +8,8 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync }
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { claimAgentStamp } from "@/packages/workit-core/src/agent-stamp";
+import { claimAgentStamp, noteAgentStamps } from "@/packages/workit-core/src/agent-stamp";
+import { PLUGIN_DIR, runHook } from "@/test/workit-claude-code/plugin-helpers";
 import {
   CLAUDE_CODE_DESCRIPTOR,
   CODEX_DESCRIPTOR,
@@ -182,4 +183,59 @@ test("Given a subagent's stamped `workit check`, When the CLI runs it, Then its 
   if (!ledger.ok) throw new Error(ledger.error);
   const checks = ledger.value.rows.filter((row) => row.type === "check");
   expect(checks.map((row) => row.actor.agentId ?? null)).toEqual(["a1", null]);
+});
+
+const shellPost = (command: string, session: string, toolUseId: string) =>
+  handleHook(
+    {
+      host: "codex_cli",
+      cwd: repo(),
+      session: { id: session, agentId: "a1", agentType: null, parentId: session },
+      permissionMode: "default",
+      transcriptPath: null,
+      event: { kind: "shell.post", command, stdout: "", exitCode: 0, toolUseId },
+    },
+    { descriptor: CODEX_DESCRIPTOR, addendum: null },
+  );
+const note = (session: string, command: string, toolUseId: string) =>
+  noteAgentStamps(process.env, session, "a1", command, { toolUseId });
+
+test("Given a finished call whose `workit` never ran, When its post-tool hook fires, Then its unclaimed stamp goes and another call's stays", () => {
+  const session = newSession();
+  note(session, "false && workit check lint", "toolu_done");
+  note(session, "workit check test", "toolu_other");
+  shellPost("false && workit check lint", session, "toolu_done");
+  expect(claim(session, ["check", "lint"])).toBeNull();
+  expect(claim(session, ["check", "test"])).toBe("a1");
+});
+
+test("Given a call that backgrounds its `workit` with `&`, When its post-tool hook fires, Then the stamp stays for the call to claim", () => {
+  const session = newSession();
+  note(session, "workit check lint > out.txt 2>&1 &", "toolu_bg");
+  shellPost("workit check lint > out.txt 2>&1 &", session, "toolu_bg");
+  expect(claim(session, ["check", "lint"])).toBe("a1");
+});
+
+test("Given Claude Code's launcher, When PostToolUse reports a finished `workit` call, Then it drops that call's stamp on its fast path; a run_in_background call keeps it", () => {
+  const session = newSession();
+  const post = (toolUseId: string, background: boolean) =>
+    runHook(PLUGIN_DIR, {
+      hook_event_name: "PostToolUse",
+      session_id: session,
+      transcript_path: "/tmp/x.jsonl",
+      cwd: repo(),
+      permission_mode: "default",
+      tool_name: "Bash",
+      tool_input: { command: "workit check lint", run_in_background: background },
+      tool_response: { stdout: "", stderr: "", interrupted: false },
+      tool_use_id: toolUseId,
+      agent_id: "a1",
+      agent_type: "general-purpose",
+    });
+  note(session, "workit check lint", "toolu_fg");
+  expect(post("toolu_fg", false).status).toBe(0);
+  expect(claim(session, ["check", "lint"])).toBeNull();
+  note(session, "workit check lint", "toolu_bg2");
+  expect(post("toolu_bg2", true).status).toBe(0);
+  expect(claim(session, ["check", "lint"])).toBe("a1");
 });

@@ -37,6 +37,8 @@ beforeAll(() => {
   mkdirSync(path.join(state, "folders", "app-1a2b", "ledger"), { recursive: true });
   mkdirSync(path.join(state, "issued"), { recursive: true });
   mkdirSync(path.join(state, "approvals"), { recursive: true });
+  // #883: the agent stamps the CLI claims as WORKIT_AGENT_ID.
+  mkdirSync(path.join(state, "agent-stamps", "0123abcd"), { recursive: true });
   mkdirSync(path.join(bare, "objects"), { recursive: true });
   writeFileSync(path.join(bare, "HEAD"), "ref: refs/heads/main\n");
   mkdirSync(bareLedger, { recursive: true });
@@ -68,6 +70,7 @@ const TARGETS = [
   path.join(state, "folders", "app-1a2b", "ledger", "ledger.jsonl"),
   path.join(state, "verdicts", "sets", "ledger.jsonl"),
   path.join(state, "verdicts", "0123abcd", "ledger.jsonl"),
+  path.join(state, "agent-stamps", "0123abcd", "0f1e.a1.cafe"),
   path.join(ledger, "ledger.jsonl"),
   path.join(bareLedger, "ledger.jsonl"),
 ];
@@ -114,6 +117,14 @@ test("G Windows paths with unquoted backslashes into the verdict store or a ledg
   }
 });
 
+test("G a planted agent stamp (#883), W written by a shell or an edit tool, T the launchers send it to the runtime, which denies it", () => {
+  const stamp = path.join(state, "agent-stamps", "0123abcd", "0f1e.a1.cafe");
+  expect(mayReach(`touch ${stamp}`, root)).toBe(true);
+  expect(editReaches(stamp, root)).toBe(true);
+  expect(claude("Bash", { command: `touch ${stamp}` })?.permissionDecision).toBe("deny");
+  expect(claude("Bash", { command: `ls ${path.dirname(stamp)}` })).toBeUndefined();
+});
+
 test("G a ledger under a git common dir not named .git (bare, --separate-git-dir), W written, T denied; a workit/ledger dir with no git dir above it passes", () => {
   const file = path.join(bareLedger, "ledger.jsonl");
   expect(claude("Write", { file_path: file })?.permissionDecision).toBe("deny");
@@ -135,6 +146,7 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
     [path.join(state, "issued"), "s.json"],
     [path.join(state, "approvals"), "a.json"],
     [path.join(state, "verdicts"), "ledger.jsonl"],
+    [path.join(state, "agent-stamps"), "0123abcd"],
     [path.join(state, "folders", "app-1a2b", "ledger"), "ledger.jsonl"],
     [home.configDir, "workspaces.json"],
     [ledger, "ledger.jsonl"],
