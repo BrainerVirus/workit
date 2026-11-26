@@ -7,9 +7,8 @@ import {
   requirementId,
   judgmentSchema,
   utcSchema,
-  operationSchemas,
-  parseOperation,
 } from "@/packages/workit-core/src/core/task-contract";
+import { operationSchemas, parseOperation } from "@/packages/workit-core/src/core/operations";
 import { operationJsonSchema } from "@/packages/workit-core/src/core/operation-input";
 import { id, operationCorpus, taskStartRequest } from "./task-fixtures";
 

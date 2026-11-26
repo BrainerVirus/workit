@@ -6,9 +6,6 @@ export {
   SCHEMA_VERSION,
   POLICY_VERSION,
   OPERATION_FAMILIES,
-  operationSchemas,
-  advertisedOperationSchemas,
-  parseOperation,
   success,
   failure,
   canonicalJson,
@@ -20,6 +17,7 @@ export {
   requirementId,
   rewriteRecordRefs,
 } from "./core/task-contract";
+export { operationSchemas, advertisedOperationSchemas, parseOperation } from "./core/operations";
 export {
   flatOperationJsonSchema,
   normalizeOperationInput,
@@ -29,8 +27,6 @@ export {
 } from "./core/operation-input";
 export type {
   OperationFamily,
-  OperationRequest,
-  TaskStartRequest,
   Caller,
   Scope,
   Ref,
@@ -60,6 +56,7 @@ export type {
   RefMap,
   Result as ContractResult,
 } from "./core/task-contract";
+export type { OperationRequest, TaskStartRequest } from "./core/operations";
 export { TaskStore, runtimeVersion } from "./core/task-store";
 export type { TaskIndexEntry } from "./core/task-store";
 export { compactTaskContext, reconcileResume } from "./core/task-context";

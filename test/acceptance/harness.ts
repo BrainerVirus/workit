@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { codexQualification } from "@/packages/workit-codex/scripts/launch-mcp";
 import { OPERATION_FAMILIES, operationJsonSchema } from "@/packages/workit-core/src/core";
-import { operationSchemas, parseOperation } from "@/packages/workit-core/src/core/task-contract";
+import { operationSchemas, parseOperation } from "@/packages/workit-core/src/core/operations";
 import { codexCapabilities } from "@/packages/workit-codex/hooks/workit-hook";
 import { cursorCapabilities } from "@/packages/workit-cursor/hooks/workit-hook";
 import { opencodeCapabilities } from "@/packages/workit-opencode/src/tools/workit";

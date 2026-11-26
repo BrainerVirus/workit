@@ -116,10 +116,11 @@ const HOOK_ENTRIES = [
 // in the hook bundle); one ceiling for both changes, that plus 2 KiB.
 // hook-slim (2026-11-25, Bun 1.4.5, at 33b0d00b): the hook-loaded schemas (workspaces, task contract,
 // store lock) moved from classic zod to zod/mini (core/zod-mini.ts), so classic's schema classes and the
-// JSON Schema emitter they import leave every hook bundle. Core run 613,480 B -> 556,901 B (Claude Code
-// 606,835 -> 550,251, Codex 595,155 -> 538,574, Cursor 594,549 -> 537,968); the ceiling is core run plus
-// 2 KiB. A hook bundle must not load classic zod again (FORBIDDEN below).
-const BUDGET = 558_949;
+// JSON Schema emitter they import leave every hook bundle, and the operation request schemas, built at
+// load, moved from task-contract.ts to core/operations.ts, which no hook loads. Core run 613,480 B ->
+// 553,461 B (Claude Code 606,835 -> 546,812, Codex 595,155 -> 535,135, Cursor 594,549 -> 534,529);
+// the ceiling is core run plus 2 KiB. A hook bundle must not load classic zod again (FORBIDDEN below).
+const BUDGET = 555_509;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

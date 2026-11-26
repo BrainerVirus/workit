@@ -6,12 +6,14 @@ import type {
   Constraint,
   Dimension,
   CheckObservation,
-  OperationRequest,
   Scope,
   OperationFamily,
   Ref,
-  TaskStartRequest,
 } from "@/packages/workit-core/src/core/task-contract";
+import type {
+  OperationRequest,
+  TaskStartRequest,
+} from "@/packages/workit-core/src/core/operations";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const digest = "a".repeat(64);

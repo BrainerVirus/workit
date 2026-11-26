@@ -3,9 +3,7 @@
 // objects, so no provider needs a depth projection. The canonical nested
 // request is built here; nested canonical payloads still pass through.
 import {
-  OPERATION_ACTIONS,
   SCHEMA_VERSION,
-  advertisedOperationSchemas,
   failure,
   success,
   type Host,
@@ -13,6 +11,7 @@ import {
   type Ref,
   type Result,
 } from "./task-contract";
+import { OPERATION_ACTIONS, advertisedOperationSchemas } from "./operations";
 
 type Json = Record<string, unknown>;
 type Field = { type: "string" | "integer" | "boolean" | "array" | "object"; enum?: string[] };
