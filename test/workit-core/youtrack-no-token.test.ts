@@ -51,6 +51,10 @@ const TOKEN_FILE_ALLOWED = new Map([
     "workit-core/src/core/grant-seal.ts",
     "seals the forge's vcs.tokenFile as part of the identity (never reads it)",
   ],
+  [
+    "workit-core/src/core/workspace-descriptions.ts",
+    "the editor description of the forge's vcs.tokenFile",
+  ],
   ["workit-core/src/core/workspaces.ts", "parses the forge's vcs.tokenFile from workspaces.json"],
 ]);
 

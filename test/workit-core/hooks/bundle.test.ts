@@ -163,7 +163,12 @@ const HOOK_ENTRIES = [
 // location change, a judge's git behind a non-loader assignment and names in any case take core run from 576,814 B to
 // 577,529 B (+715 B; Claude Code 570,885 B, Codex 559,208 B, Cursor 558,602 B). The ceiling is core
 // run plus 2 KiB; whichever of this and #966 merges second reconciles it.
-const BUDGET = 579_577;
+// schema-desc (#962, 2026-11-26, Bun 1.4.5, rebased on ab39f69f): the workspaces.json editor
+// descriptions moved from workspaces.ts to core/workspace-descriptions.ts, which only
+// config-schemas.ts (CLI) loads, so they and zod's registry leave every hook bundle. Core run
+// 577,529 B -> 568,160 B (-9,369 B; Claude Code 570,885 -> 561,516, Codex 559,208 -> 549,839,
+// Cursor 558,602 -> 549,233); the ceiling is core run plus 2 KiB.
+const BUDGET = 570_208;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
