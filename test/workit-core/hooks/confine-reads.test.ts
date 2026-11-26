@@ -760,6 +760,34 @@ test("Given a PowerShell script file, an encoded command, iex, a cmd variable ta
   allowed(implementer, ["pwsh -File x.ps1", "echo touch | xargs -I{} {} f"]);
 });
 
+// #880: the path a link command creates is a write target, also inside `cmd /c` and pwsh scripts.
+test("Given ln, mklink or New-Item making a link, When a judge or an implementer runs it in the lead's checkout, Then it is denied; in the implementer's worktree or the judge's scratch it runs", () => {
+  const links = [
+    "ln -s src lnk",
+    "ln src/a.txt lnk",
+    "ln -st sub src",
+    "mklink /J lnk src",
+    `cmd /c "mklink /D lnk src"`,
+    `cmd /c "cd sub && mklink /H lnk a.txt"`,
+    `pwsh -c "New-Item -ItemType SymbolicLink -Path lnk -Target src"`,
+    `pwsh -c "ni lnk -ItemType Junction -Value src"`,
+    `powershell -Command "New-Item -ItemType:HardLink -Path:lnk -Target:a.txt"`,
+    `pwsh -c "New-Item -ItemType SymbolicLink -Value src lnk"`,
+  ];
+  denied(verifier, links, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    links.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  allowed(implementer, links);
+  const scratch = path.join(git(lead, "rev-parse", "--show-toplevel"), ".workit-scratch");
+  allowed(
+    verifier,
+    links.map((command) => `cd ${scratch} && ${command}`),
+  );
+});
+
 // Round 3, group 4: awk's commands and pipes, sed's `w`, `W` and `e`, a program file, `deno
 // eval`, `tsx -e` and `ts-node -e` write wherever they run; `ftruncate` is a writer like `truncate`.
 test("Given awk or sed that writes or runs a command, deno eval, tsx -e, ts-node -e or an ftruncate, When a judge or an implementer outside its worktree runs it, Then it is denied; the read-only forms run", () => {

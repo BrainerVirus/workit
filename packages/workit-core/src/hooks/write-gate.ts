@@ -217,11 +217,18 @@ const editsOf = (input: string[]): string[] | null => {
     case "cp":
     case "ln":
     case "install": {
-      // `-t D`, `-tD`, `--target-directory[=]D`.
-      const into = valueOf(args, /^(?:-t|--target-directory=?)(.*)$/s);
+      // `-t D`, `-tD`, `-st D`, `--target-directory[=]D`.
+      const into = valueOf(args, /^(?:-[a-zA-Z]*t|--target-directory=?)(.*)$/s);
       if (into !== undefined) return [into];
-      const last = operands(args).at(-1);
-      return last ? [last] : null;
+      const files = operands(args);
+      // `ln -s /a/b` makes the link `b` here.
+      if (name === "ln" && files.length === 1) return [path.basename(files[0])];
+      return files.length ? [files.at(-1) as string] : null;
+    }
+    // `mklink [/D|/H|/J] <link> <target>`: the link is the write.
+    case "mklink": {
+      const link = args.find((arg) => !/^\/[dhj]$/i.test(arg));
+      return link ? [link] : null;
     }
     case "dd":
       return args.filter((item) => item.startsWith("of=")).map((item) => item.slice(3));
@@ -248,11 +255,22 @@ const editsOf = (input: string[]): string[] | null => {
     case "del":
     case "copy-item":
     case "move-item": {
-      const flag = args.findIndex((item) =>
-        /^-(?:path|filepath|literalpath|destination)$/i.test(item),
+      // `-Path x`, `-Path:x`; a positional skips the values of `-ItemType`, `-Value`, `-Target`….
+      const named = valueOf(args, /^-(?:path|filepath|literalpath|destination)(?::(.+))?$/is);
+      if (
+        named !== undefined ||
+        args.some((item) => /^-(?:path|filepath|literalpath|destination)$/i.test(item))
+      )
+        return named ? [named] : null;
+      const files = args.filter(
+        (item, at) =>
+          !item.startsWith("-") &&
+          !/^-(?:itemtype|type|value|target|encoding|name)$/i.test(args[at - 1] ?? ""),
       );
-      if (flag >= 0) return args[flag + 1] ? [args[flag + 1]] : null;
-      const files = operands(args);
+      if (files.length === 0 && (name === "new-item" || name === "ni")) {
+        const leaf = valueOf(args, /^-name(?::(.+))?$/is);
+        if (leaf) return [leaf];
+      }
       if (name === "move-item") return files.length ? files : null;
       const file = name === "copy-item" ? files.at(-1) : files[0];
       return file ? [file] : null;
@@ -1178,7 +1196,7 @@ const pathsIn = (text: string): string[] => [...text.matchAll(PATHS)].map((match
  */
 const linkSources = (args: readonly string[], at: (file: string) => string | null): string[] => {
   const names = operands([...args]);
-  const into = args.indexOf("-t");
+  const into = args.findIndex((arg) => /^-[a-zA-Z]*t$/.test(arg));
   const dest = into >= 0 ? args[into + 1] : names.length > 1 ? names.at(-1) : ".";
   const sources = names.filter((name, index) =>
     into >= 0 ? name !== dest : index < names.length - 1 || names.length === 1,

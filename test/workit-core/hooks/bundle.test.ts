@@ -148,8 +148,10 @@ const HOOK_ENTRIES = [
 // #880 opaque scripts (2026-11-26, Bun 1.4.5, on 880adbda): a `pwsh -File` script, an encoded
 // command, `iex`, a cmd `%VAR%` target and an xargs command named by stdin count as writers; core
 // run 566,224 B -> 566,995 B (+771 B; Claude Code 560,345 B, Codex 548,658 B, Cursor 548,052 B).
-// The ceiling is core run plus 2 KiB.
-const BUDGET = 569_043;
+// The ceiling is core run plus 2 KiB. Link paths (`mklink`, `New-Item -Path:x`, `ln -st`, a
+// one-operand `ln`) as write targets then take core run to 567,412 B (+417 B; Claude Code 560,762 B,
+// Codex 549,075 B, Cursor 548,469 B); the ceiling is that plus 2 KiB.
+const BUDGET = 569_460;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
