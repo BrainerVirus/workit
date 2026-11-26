@@ -6,12 +6,16 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -399,3 +403,47 @@ test("Given an [Unreleased] entry also under its release, When apply adds an ent
   expect(out.err).toContain("Run workit changelog roll");
   expect(out.out).not.toContain("moved");
 });
+
+test.skipIf(process.platform === "win32")(
+  "Given a CRLF changelog with mode 0640 and a shipped entry, When apply adds an entry, Then it is replaced by a rename that keeps the mode and CRLF and leaves no temp file",
+  async () => {
+    const crlf = (text: string) => text.replace(/\n/g, "\r\n");
+    const r = repo([
+      { text: crlf(SHIPPED_TAGGED), tag: "v1.0.0" },
+      { text: crlf(SHIPPED_ON_MAIN) },
+    ]);
+    const file = path.join(r.dir, "CHANGELOG.md");
+    chmodSync(file, 0o640);
+    const inode = statSync(file).ino;
+    expect(await run(ADD_FIXED, io(r.dir))).toBe(0);
+    expect(r.read()).toBe(
+      crlf(
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Not released yet.\n\n### Fixed\n\n- The new fix.\n\n## [1.0.0] - 2026-02-03\n\n### Added\n\n- Shipped in 1.0.0.\n",
+      ),
+    );
+    expect(statSync(file).mode & 0o777).toBe(0o640);
+    // A new inode: the file was renamed into place, never truncated and rewritten.
+    expect(statSync(file).ino).not.toBe(inode);
+    expect(readdirSync(r.dir).filter((name) => name.includes(".tmp"))).toEqual([]);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given CHANGELOG.md is a symlink, or a new changelog under a symlinked directory, When apply adds an entry, Then the real file is written and the links stay",
+  async () => {
+    const r = repo([{ text: SHIPPED_ON_MAIN }]);
+    const real = path.join(r.dir, "docs-CHANGELOG.md");
+    writeFileSync(real, SHIPPED_ON_MAIN);
+    rmSync(path.join(r.dir, "CHANGELOG.md"));
+    symlinkSync("docs-CHANGELOG.md", path.join(r.dir, "CHANGELOG.md"));
+    expect(await run(ADD_FIXED, io(r.dir))).toBe(0);
+    expect(readFileSync(real, "utf8")).toBe(`${SHIPPED_ON_MAIN}### Fixed\n\n- The new fix.\n`);
+
+    mkdirSync(path.join(r.dir, "real-docs"));
+    symlinkSync("real-docs", path.join(r.dir, "docs"));
+    expect(await run([...ADD_FIXED, "--path", "docs/notes/CHANGELOG.md"], io(r.dir))).toBe(0);
+    expect(readFileSync(path.join(r.dir, "real-docs/notes/CHANGELOG.md"), "utf8")).toContain(
+      "## [Unreleased]\n\n### Fixed\n\n- The new fix.\n",
+    );
+  },
+);
