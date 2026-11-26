@@ -438,9 +438,13 @@ const mayReachWith = (text, cwd, dirs) => {
     /~[\w+-]|\$\{(?:!|\w+[^\w}])|\bpopd\b/.test(bare) ||
     /(?:^|[\s;&|(])(?:cd|pushd|chdir)(?:\s+-\S*)*\s*(?:$|[;&|)\n$`])/.test(bare) ||
     (dirs.env.CDPATH !== undefined && /\b(?:cd|pushd)\b/.test(bare)) ||
-    // A link or mount (`ln`, `cp -l|-s`, `mount`, `bindfs`): the gate judges its source.
-    /(?:^|[\s;&|(/])(?:ln|mount|bindfs)(?:\s|$)/.test(bare) ||
-    /(?:^|[\s;&|(/])cp\s[^;&|\n]*\s(?:-[a-zA-Z]*[ls]|--(?:link|symbolic-link)\b)/.test(bare)
+    // A link or mount (`ln`, `cp -l|-s`, `install -l`, `rsync --link-dest`, `mount`,
+    // `bindfs`, `mklink`, `New-Item -ItemType SymbolicLink`): the gate judges its source.
+    /(?:^|[\s;&|(/])(?:ln|mount|bindfs|mklink)(?:\s|$)/i.test(bare) ||
+    /(?:^|[\s;&|(/])(?:cp|install)\s[^;&|\n]*\s(?:-[a-zA-Z]*[ls]|--(?:link|symbolic-link)\b)/.test(
+      bare,
+    ) ||
+    /--link-dest\b|\b(?:symboliclink|junction|hardlink)\b/i.test(bare)
   )
     return true;
   // d. Every word as a path, from every directory a `cd` may reach.

@@ -481,8 +481,12 @@ Issued-registry guard limits (#292):
   - A link or mount whose source is or holds a guarded path is denied when the
     command makes it, so a write later in the same command (before the link
     exists, when the hook reads it) cannot pass through it: `ln` (hard, `-s`,
-    `-f`, `-T`, `--symbolic`), `cp -s|-l|--link|--symbolic-link`, `mount` and
-    `bindfs`. A source holds one when it is an ancestor of the state or a config
+    `-f`, `-T`, `--symbolic`), `cp -s|-l|--link|--symbolic-link`, `install -l`,
+    `rsync --link-dest` (a relative dir read from the destination), `mount`,
+    `bindfs`, and on Windows `mklink` (`/D`, `/J`, `/H`, also in `cmd /c`) and
+    `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink`. On Windows a
+    command with unquoted `C:\…` paths is judged a second time with them
+    spelled with `/`, since a POSIX shell drops the `\`. A source holds one when it is an ancestor of the state or a config
     dir, a repository's root, git dir or `workit` dir holding a ledger, or an
     ancestor of the ledger of the repository the command runs in.
   - (L) A hard link made and written inside a program Workit cannot read is not
@@ -506,7 +510,7 @@ Issued-registry guard limits (#292):
     and any glob, brace or set variable near a guarded dir's ancestry; it says
     yes to every spelling it does not resolve (`~user`, `$'…'`, `${X:-…}`, a
     `cd` with no literal target, `popd`, `CDPATH`, more than 64 words, and any
-    `ln`, `cp -l|-s`, `mount` or `bindfs`). A
+    link or mount form above). A
     Claude Code edit goes to the runtime with a task store, for a confined
     agent, or when its file may reach a guarded path. A write whose text
     hides every marker (a program that writes where its own code says) is not

@@ -6,7 +6,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
-import { inRepoLedger, unquotedWindowsRegistry } from "@/packages/workit-core/src/hooks/write-gate";
+import {
+  inRepoLedger,
+  shellGate,
+  unquotedWindowsRegistry,
+  windowsSlashed,
+} from "@/packages/workit-core/src/hooks/write-gate";
 import { editReaches, mayReach } from "@/packages/workit-core/src/hooks/write-reach";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "./hook-fixtures";
@@ -145,6 +150,14 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
     `cp --symbolic-link ${source}/${name} l && echo x >> l`,
     `sudo mount --bind ${source} m && echo x >> m/${name}`,
     `bindfs ${source} m && echo x >> m/${name}`,
+    `install -l s ${source}/${name} l && echo x >> l`,
+    `install -lh ${source}/${name} l && echo x >> l`,
+    `rsync -a --link-dest=${source} /tmp/empty/ d/ && echo x >> d/${name}`,
+    `rsync -a --link-dest ${source} /tmp/empty/ d/`,
+    `mklink /D l ${source} && echo x >> l/${name}`,
+    `mklink l ${source}/${name}`,
+    `cmd /c mklink /J l ${source}`,
+    `cmd.exe /c "mklink /H l ${source}/${name}"`,
   ];
   for (const [source, name] of registries)
     for (const command of links(source, name)) {
@@ -170,6 +183,23 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
     expect([command, out?.permissionDecision]).toEqual([command, "deny"]);
     expect(out?.permissionDecisionReason).toContain("links or mounts");
   }
+  // PowerShell's New-Item (or `ni`) makes a symbolic link, junction or hard link.
+  for (const [source, name] of registries)
+    for (const command of [
+      `New-Item -ItemType SymbolicLink -Path l -Target ${source}`,
+      `ni l -ItemType Junction -Value ${source}`,
+      `New-Item -ItemType:HardLink -Path l -Target:${source}/${name}`,
+    ]) {
+      const out = shellGate(root, command, null, "powershell");
+      expect([command, out.kind]).toEqual([command, "deny"]);
+      expect(mayReach(command, root), command).toBe(true);
+    }
+  // A relative --link-dest is read from the destination.
+  const fromDest = path.relative(path.join(root, "d"), path.join(state, "verdicts"));
+  expect(
+    claude("Bash", { command: `rsync -a --link-dest=${fromDest} /tmp/empty/ d/` })
+      ?.permissionDecision,
+  ).toBe("deny");
   // A relative symbolic source resolves from the link's dir.
   const relative = path.relative(path.join(root, "sub"), path.join(state, "verdicts"));
   expect(
@@ -182,6 +212,20 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
     `ln -sf ${path.join(base, "notes")} n && echo x >> n/x`,
     `cp -s ${path.join(base, "notes", "a")} b`,
     `cp ${path.join(state, "verdicts", "sets", "ledger.jsonl")} copy.jsonl`,
+    `rsync -a --link-dest=../prev ${path.join(base, "notes")}/ d/`,
+    `install -m 644 ${path.join(base, "notes", "a")} b`,
+    `mklink /D n ${path.join(base, "notes")}`,
   ])
     expect(claude("Bash", { command }), command).toBeUndefined();
+  expect(shellGate(root, "New-Item -ItemType Directory -Path x", null, "powershell").kind).not.toBe(
+    "deny",
+  );
+});
+
+test("G an unquoted Windows path in a command, W slashed for the POSIX analysis, T each word with a backslash reads with slashes; elsewhere, untouched", () => {
+  expect(windowsSlashed("ln -s C:\\st\\issued l && echo x >> l/s.json", "win32")).toBe(
+    "ln -s C:/st/issued l && echo x >> l/s.json",
+  );
+  expect(windowsSlashed("ln -s /st/issued l", "win32")).toBeNull();
+  expect(windowsSlashed("ln -s C:\\st\\issued l", "linux")).toBeNull();
 });

@@ -779,6 +779,74 @@ const linkSources = (args: readonly string[], at: (file: string) => string | nul
   });
 };
 
+const WINDOWS_LINK_TYPE = /^(?:symboliclink|junction|hardlink)$/i;
+
+/**
+ * The paths a link or mount command reaches (resolved by `at`/`atAll`), each
+ * checked by the registry guard as a source (LINK_SOURCE): `ln` (a relative
+ * symbolic source from the link's dir and from here), `cp -l|-s`, `mount`,
+ * `bindfs` (every operand), `install -l`, `rsync --link-dest` (from here and
+ * from the destination), and on Windows `mklink` (also as `cmd /c mklink`) and
+ * `New-Item`/`ni -ItemType SymbolicLink|Junction|HardLink` (both paths).
+ */
+const linkReach = (
+  verb: string,
+  args: string[],
+  at: (file: string) => string | null,
+  atAll: (file: string) => string[],
+): string[] => {
+  const all = (files: readonly string[]) => files.flatMap((file) => atAll(file));
+  const names = operands(args);
+  if (verb === "mount" || verb === "bindfs") return all(names);
+  if (
+    verb === "ln" ||
+    (verb === "cp" && args.some((arg) => /^-[a-zA-Z]*[ls]|^--(?:link|symbolic-link)$/.test(arg)))
+  )
+    return [...linkSources(args, at), ...all(names.length < 2 ? names : names.slice(0, -1))];
+  if (verb === "install") {
+    const flag = args.findIndex((arg) => arg.startsWith("-l"));
+    if (flag < 0) return [];
+    const rest = operands(
+      args.filter((_, index) => index !== flag && (args[flag] !== "-l" || index !== flag + 1)),
+    );
+    return all(rest.slice(0, -1));
+  }
+  if (verb === "rsync") {
+    const dest = names.at(-1);
+    return args.flatMap((arg, index) => {
+      const match = /^--link-dest(?:=(.*))?$/s.exec(arg);
+      const dir = match ? (match[1] ?? args[index + 1]) : undefined;
+      if (!dir) return [];
+      // A relative dir is read from the destination.
+      return [...atAll(dir), ...(dest && !path.isAbsolute(dir) ? atAll(path.join(dest, dir)) : [])];
+    });
+  }
+  // `cmd /c mklink …` (one quoted word or several).
+  const shell = /^cmd(?:\.exe)?$/.test(verb) ? args.findIndex((arg) => /^\/[ck]$/i.test(arg)) : -1;
+  const inner =
+    shell < 0
+      ? []
+      : args
+          .slice(shell + 1)
+          .flatMap((arg) => arg.split(/\s+/))
+          .filter(Boolean);
+  const mklink =
+    verb === "mklink" ? args : inner[0]?.toLowerCase() === "mklink" ? inner.slice(1) : null;
+  if (mklink) return all(mklink.filter((arg) => !/^\/[dhj]$/i.test(arg)));
+  if (
+    (verb === "new-item" || verb === "ni") &&
+    args.some((arg) => WINDOWS_LINK_TYPE.test(arg.replace(/^-[\w-]+:/, "")))
+  )
+    return all(
+      args.flatMap((arg) => {
+        // `-Target:C:\x` holds its value; another flag is a name.
+        const value = arg.startsWith("-") ? /^-[\w-]+:(.+)$/s.exec(arg)?.[1] : arg;
+        return value && !WINDOWS_LINK_TYPE.test(value) ? [value] : [];
+      }),
+    );
+  return [];
+};
+
 /**
  * Whether a shell command recognizably edits files (redirects, `>& file`,
  * tee, sponge, touch, mkdir, cp/mv/rm, `sed -i`/`perl -i`, dd, and working-tree git: apply,
@@ -1656,25 +1724,10 @@ const segmentTargets = (
           ))
       )
         for (const file of operands(args)) targets.push(...atAll(file));
-      // A link (`ln`, `cp -l|-s`, a bind mount, `bindfs`) reaches its source: a write
-      // through it lands there, even one later in this command, before the link exists.
-      const mounts = verb === "mount" || verb === "bindfs";
-      if (
-        mounts ||
-        verb === "ln" ||
-        (verb === "cp" &&
-          args.some((arg) => /^-[a-zA-Z]*[ls]|^--(?:link|symbolic-link)$/.test(arg)))
-      ) {
-        const names = operands(args);
-        for (const source of [
-          ...linkSources(args, at),
-          // A relative symbolic source as spelled from here too; a mount's every operand.
-          ...(mounts || names.length < 2 ? names : names.slice(0, -1)).flatMap((file) =>
-            atAll(file),
-          ),
-        ])
-          targets.push(path.join(source, LINK_SOURCE));
-      }
+      // A link reaches its source: a write through it lands there, even one later
+      // in this command, before the link exists.
+      for (const source of linkReach(verb, args, at, atAll))
+        targets.push(path.join(source, LINK_SOURCE));
     }
     if (strict && dir !== undefined) {
       const runIn = dir;
@@ -2161,6 +2214,19 @@ export const underConfig = (
 };
 
 /**
+ * On Windows, `command` with each word that holds a `\` spelled with `/`
+ * (which Windows reads the same), so the POSIX analysis keeps its separators;
+ * null elsewhere or with no `\`.
+ */
+export const windowsSlashed = (
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null =>
+  platform === "win32" && command.includes("\\")
+    ? command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) => word.replaceAll("\\", "/"))
+    : null;
+
+/**
  * A POSIX shell drops an unquoted `\` before the analysis sees the words, so
  * `> C:\state\issued\x` loses its separators. On Windows, a command that
  * spells out a registry path is judged with its backslashes turned into
@@ -2194,9 +2260,7 @@ export const unquotedWindowsRegistry = (
         : text.includes(`${state}/${kind}`),
   );
   if (!present.length) return null;
-  const spans = command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) =>
-    word.replaceAll("\\", "/"),
-  );
+  const spans = windowsSlashed(command, platform) ?? command;
   const writes = shellWrites(spans);
   if (!writes.writes) return null;
   // A relative target lands in the dir a `cd` or `pushd` moved to.
@@ -2331,8 +2395,13 @@ export function shellGate(
 ): HookDecision {
   try {
     const windows = unquotedWindowsRegistry(command);
+    // An unquoted `C:\…` path loses its `\` to the POSIX analysis: judged again with `/`.
+    const slashed = dialect === "posix" ? windowsSlashed(command) : null;
     const forged =
       registryTarget(cwd, shellMutationTargets(cwd, command, dialect, "registry")) ??
+      (slashed === null
+        ? null
+        : registryTarget(cwd, shellMutationTargets(cwd, slashed, dialect, "registry"))) ??
       (windows ? { file: `the ${windows} registry`, registry: windows } : null);
     if (forged) return registryDeny(forged);
   } catch {

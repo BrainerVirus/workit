@@ -469,7 +469,9 @@ row's. Its 7 days run from that ledger verdict. Both the store
 bare repository's or a `--separate-git-dir` one's included, or
 `<state>/folders/<slug>/ledger/` outside git) are guarded paths: an agent's Edit,
 Write or shell write to them is denied (the ledger guard), and so is a link or
-mount (`ln`, `cp -s|-l`, `mount`, `bindfs`) to them or a dir that holds them.
+mount (`ln`, `cp -s|-l`, `install -l`, `rsync --link-dest`, `mount`, `bindfs`,
+and on Windows `mklink` and `New-Item -ItemType SymbolicLink|Junction|HardLink`)
+to them or a dir that holds them.
 
 `workit ledger void <id>` of a verdict shared with `--set` also retires the
 set verdict: a void row in the same store, after which it covers no PR in
