@@ -182,6 +182,21 @@ const IDENTITY_ENV =
 // A host's own session variable beside a `workit` call (#981): the guard reads it there.
 const HOST_ENV =
   /OPENCODE_SESSION_ID|PI_SESSION_ID|CODEX_THREAD_ID|CLAUDECODE|CLAUDE_CODE_ENTRYPOINT/;
+// A command that may run one of Workit's own hook entries or remove a ledger's
+// dir goes to the runtime's guards (#984): a copy of workit-core hooks/hook-entry-hint.ts.
+const HOOK_ENTRY_TEXT =
+  /workit-hook|workit-(?:codex|cursor)-hook|session-start|launch(?:-runtime)?\.mjs|\b(?:run|hook|launcher)\.ts\b|PLUGIN_ROOT|@workit-dev\//u;
+const RUNS_SCRIPT =
+  /(?:^|[\s;&|(`])(?:\S*[\\/])?(?:node|bunx?|deno|npx|pnpx|tsx|ts-node)(?:\.exe)?\s[^\n;&|]*(?:[*?[$`]|\.[cm]?[jt]s\b)/u;
+const REMOVES_ABOVE =
+  /\b(?:rm|rmdir|rd|mv|unlink|shred|find|remove-item|move-item|ri|mi|del|erase)\b[^\n;&|]*\s(?:\.{1,2}(?:[\\/\s]|$)|[~/$*?]|[A-Za-z]:)/iu;
+
+const mayHitHookGuard = (text) => {
+  const bare = text.replace(/['"\\]/gu, "");
+  return [text, bare].some(
+    (all) => HOOK_ENTRY_TEXT.test(all) || RUNS_SCRIPT.test(all) || REMOVES_ABOVE.test(all),
+  );
+};
 // A lead's `workit` call goes too while a subagent's stamp waits to be claimed
 // (its call at a permission prompt, say): the runtime stamps the lead's call,
 // so one argv from two actors is ambiguous and neither claims the other's id.
@@ -783,6 +798,7 @@ const fastAllow = (() => {
         WORKIT_DELIVERY.test(command) ||
         (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
         IDENTITY_ENV.test(command.replace(/['"\\]/g, "")) ||
+        mayHitHookGuard(command) ||
         (WORKIT_CALL.test(command) &&
           (ENV_BUILTIN.test(command) || HOST_ENV.test(command.replace(/['"\\]/g, "")))) ||
         WORKIT_REORDER.test(command) ||

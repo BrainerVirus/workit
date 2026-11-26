@@ -296,6 +296,26 @@ const editsOf = (input: string[]): string[] | null => {
 };
 
 /**
+ * The paths one simple command removes or moves away (#984): `rm`, `rmdir`, `unlink`, `mv`'s
+ * sources, `find … -delete` roots and PowerShell's Remove-Item and Move-Item (and aliases).
+ */
+const removalsOf = (input: string[]): string[] => {
+  const [verb = "", ...args] = pastLead(input);
+  const name = (verb.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  const files = operands(args);
+  if (/^(?:rm|rmdir|rd|unlink|shred|remove-item|ri|del|erase)$/.test(name)) return files;
+  if (/^(?:mv|move-item|mi|move)$/.test(name)) {
+    const into = valueOf(args, /^(?:-[a-zA-Z]*t|--target-directory=?)(.*)$/s);
+    return into === undefined ? files.slice(0, -1) : files.filter((file) => file !== into);
+  }
+  if (name === "find" && args.some((arg) => arg === "-delete" || /^-exec(?:dir)?$/.test(arg))) {
+    const end = args.findIndex((arg) => /^[-(!]/.test(arg));
+    return end === 0 ? ["."] : args.slice(0, end);
+  }
+  return [];
+};
+
+/**
  * Wrappers that run their operand as the command, with the option letters that take a value
  * (`#`: one operand comes before the command).
  */
@@ -1493,6 +1513,8 @@ export const OPAQUE_TARGET = ".workit-runs-";
 const UNRESOLVED_TARGET = ".workit-unresolved-target";
 /** Stands under a path a command links or mounts (`<source>/.workit-link-source`): the registry guard asks whether it is or holds a guarded path. */
 const LINK_SOURCE = ".workit-link-source";
+/** Stands under a path a command removes or moves away (#984): the ledger guard asks whether it is or holds a ledger. */
+const REMOVED_SOURCE = ".workit-removed-source";
 
 /** A one-command override: `WORKIT_LIVE_SESSION=override <command>`. */
 const OVERRIDE = "WORKIT_LIVE_SESSION=override";
@@ -2368,6 +2390,9 @@ const segmentTargets = (
     if (edits === null) {
       if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
     }
+    if (strict === "registry")
+      for (const gone of removalsOf(body))
+        for (const file of atAll(gone)) targets.push(path.join(file, REMOVED_SOURCE));
     for (const file of [...segment.redirects, ...(edits ?? [])])
       // PowerShell's `$null` and cmd's `nul` discard what is written to them.
       if (
@@ -2542,7 +2567,7 @@ type Registry = "issued" | "approvals" | "grants" | "ledger";
  * A guarded registry; "link", a symlink chain too long to follow, which may
  * reach one; or "holds", a link or mount source that holds one.
  */
-type Denied = Registry | "link" | "holds";
+type Denied = Registry | "link" | "holds" | "removes";
 
 /** The config files only the user writes: grants and the seal that vouches for them (#819). */
 const CONFIG_FILES = ["workspaces.json", SEAL_FILE];
@@ -2696,6 +2721,22 @@ const holdsGuarded = (cwd: string, source: string, state: string, configs: strin
   );
 };
 
+/**
+ * Whether removing or moving `source` takes a ledger with it (#984): it is a `.git` dir or a
+ * `.git/workit`, holds the ledger dir of the repository `cwd` is in (made yet or not), or holds
+ * a guarded path (holdsGuarded).
+ */
+const removesLedger = (cwd: string, source: string, state: string, configs: string[]): boolean => {
+  const real = canonical(source);
+  if (/(?:^|[\\/])\.git(?:[\\/]workit)?$/i.test(real)) return true;
+  const own = ledgerPath(cwd);
+  if (own.ok) {
+    const rel = path.relative(real, canonical(path.dirname(own.value)));
+    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return true;
+  }
+  return holdsGuarded(cwd, source, state, configs);
+};
+
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
@@ -2706,6 +2747,11 @@ const registryTarget = (
   const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
+    if (path.basename(file) === REMOVED_SOURCE) {
+      if (removesLedger(cwd, path.dirname(path.resolve(cwd, file)), state, configs))
+        return { file: target, registry: "removes" };
+      continue;
+    }
     if (path.basename(file) === LINK_SOURCE) {
       const source = path.dirname(path.resolve(cwd, file));
       const reached =
@@ -2889,6 +2935,12 @@ const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: stri
     what: "a symlink chain Workit could not resolve (over 40 links), which may reach a guarded path",
     unblock: "Write to the file's real path.",
   },
+  removes: {
+    label: "ledger guard",
+    what: "a Workit ledger, the git dir that holds one or Workit's state",
+    unblock:
+      "Never remove or move `.git`, `.git/workit` or a dir that holds a Workit ledger: the ledger keeps the session's verdicts and pins. Remove the files you made by name.",
+  },
   holds: {
     label: "registry guard",
     what: "Workit's state, its config or a repository ledger",
@@ -2926,6 +2978,12 @@ const registryDeny = ({ file, registry }: { file: string; registry: Denied }): H
       kind: "deny",
       reason: `workit ${label}: this command links or mounts ${path.dirname(file)}, which is or holds ${what}. ${LINK_UNBLOCK}`,
       unblock: LINK_UNBLOCK,
+    };
+  if (path.basename(file) === REMOVED_SOURCE)
+    return {
+      kind: "deny",
+      reason: `workit ${label}: this command removes or moves ${path.dirname(file)}, which is or holds ${what}. ${unblock}`,
+      unblock,
     };
   if (path.basename(file) === UNRESOLVED_TARGET)
     return {
