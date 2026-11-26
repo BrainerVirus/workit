@@ -13,8 +13,8 @@
 // passes. An interpreter whose inline code imports the module, or a copy run
 // from elsewhere, is the interpreter-class limit (hosts.md#host-parity).
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { userHome } from "../core/workit-paths.mjs";
 import { shellScript } from "./delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./shell-words";
 import { pastOptions, WRAPPERS } from "./write-gate";
@@ -105,7 +105,7 @@ const expand = (word: string, vars: ReadonlyMap<string, string>): string =>
       const name = braced ?? bare ?? "";
       return vars.get(name) ?? process.env[name] ?? match;
     })
-    .replace(/^~(?=[\\/]|$)/u, os.homedir());
+    .replace(/^~(?=[\\/]|$)/u, userHome(process.env));
 
 /** The paths an absolute glob expands to, segment by segment (at most 64), or the path itself. */
 const globbed = (file: string): string[] => {
@@ -265,7 +265,7 @@ const scanCommand = (command: string, dialect: ShellDialect, scan: Scan): string
     // `cd <dir>` moves where the next relative path resolves; one Workit cannot follow loses it.
     if (["cd", "pushd", "chdir", "set-location", "sl"].includes(verb)) {
       const target = words.slice(1).find((word) => !word.startsWith("-") || word === "-");
-      const moved = target === undefined ? os.homedir() : expand(target, scan.vars);
+      const moved = target === undefined ? userHome(process.env) : expand(target, scan.vars);
       scan.dir =
         moved === "-" || /[$`]/u.test(moved)
           ? null

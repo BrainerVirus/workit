@@ -186,6 +186,7 @@ test("Given a repository ledger, When a command removes or moves it, the git dir
     [repo, "mv -t /tmp .git"],
     [repo, "cd .git && rm -rf workit"],
     [repo, "find .git/workit -delete"],
+    [repo, "find . -type f -exec rm {} +"],
     [repo, `rm -rf ${repo}`],
     [sub, "rm -rf .."],
     [repo, "sudo rm -rf .git/workit"],
@@ -212,6 +213,8 @@ test("Given a repository ledger, When ordinary removals and git commands run, Th
     "git status",
     "git rm -r --cached build",
     "git gc",
+    "find . -name x -exec cat {} \\;",
+    "find . -name '*.tmp' -delete",
   ])
     for (const host of HOSTS)
       expect(

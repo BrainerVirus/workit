@@ -308,7 +308,16 @@ const removalsOf = (input: string[]): string[] => {
     const into = valueOf(args, /^(?:-[a-zA-Z]*t|--target-directory=?)(.*)$/s);
     return into === undefined ? files.slice(0, -1) : files.filter((file) => file !== into);
   }
-  if (name === "find" && args.some((arg) => arg === "-delete" || /^-exec(?:dir)?$/.test(arg))) {
+  // `find … -delete`, or `-exec`/`-execdir` running a removal, with no name, path or regex test
+  // narrowing it: the roots before its first test.
+  const removes =
+    args.some(
+      (arg, at) =>
+        arg === "-delete" ||
+        (/^-exec(?:dir)?$/.test(arg) &&
+          /^(?:rm|rmdir|unlink|shred|mv)$/.test(commandName(args[at + 1] ?? ""))),
+    ) && !args.some((arg) => /^-i?(?:name|path|wholename|regex)$/.test(arg));
+  if (name === "find" && removes) {
     const end = args.findIndex((arg) => /^[-(!]/.test(arg));
     return end === 0 ? ["."] : args.slice(0, end);
   }
