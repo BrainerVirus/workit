@@ -443,6 +443,19 @@ const ORDINARY = [
   'git commit -m "fix: node bin/workit-hook.mjs is the hook"',
   `find . -name '*.ts' | while read f; do grep -c x "$f"; done`,
   "find . -name '*.test.mjs' -exec node {} +",
+  // `.git` housekeeping (verdict mwxrd3nu): none of it reaches the ledger.
+  "rm -rf .git/modules",
+  "rm -rf .git/hooks/pre-commit",
+  "rm .git/index.lock",
+  "rm -rf .git/rebase-merge",
+  "rm -f .git/COMMIT_EDITMSG",
+  "find .git -name '*.lock' -delete",
+  "find .git/objects -type f -empty -delete",
+  "rm -rf .git/worktrees/gone",
+  "rm .git/gc.log",
+  "git clean -fdx",
+  "git worktree prune",
+  "git gc --prune=now",
 ];
 
 test("Given the verifier's ordinary commands in a repository with a ledger, When run, Then neither the hook guard nor the ledger guard denies them", () => {
@@ -454,4 +467,58 @@ test("Given the verifier's ordinary commands in a repository with a ledger, When
         `${host[1]}: ${command}`,
       ).toBe(false);
     }
+});
+
+// Verdict mwxrd3nu (#989 round 3): generic fail-closed rules for what the shell builds.
+const ROUND_3 = [
+  `n=bun; $n ${R} claude_code < g.json`,
+  `n=node; { $n ${H}; }`,
+  `$(echo node) ${H}`,
+  `\`echo node\` ${H}`,
+  `\${n} ${H}`,
+  `for f in ${R}; do bun $f claude_code < g.json; done`,
+  `for f in ${H}; do node "$f"; done`,
+  `for f in a ${H}; do node "$f"; done`,
+  `select x in ${H}; do node $x; break; done`,
+  `while read f; do node "$f"; done <<< ${H}`,
+  `while read -r f; do node "$f"; done <<EOF\n${H}\nEOF`,
+  `(( $(bun ${R} claude_code < g.json > g.out; echo 1) > 0 ))`,
+  `(( $(node ${H} | wc -c) > 0 ))`,
+  `echo $(( $(node ${H} < p.json | wc -c) ))`,
+  `at now <<< 'node ${H}'`,
+  `batch <<< 'node ${H}'`,
+  `at now <<'EOF'\n{ node ${H}; }\nEOF`,
+];
+
+test("Given a command word the shell builds, a loop variable, an arithmetic substitution or an at/batch script, When it runs an entry, Then every host denies it", () => {
+  for (const command of ROUND_3) {
+    expect(hookEntryRun(ROOT, command), command).not.toBeNull();
+    for (const host of HOSTS)
+      expect(
+        deniedBy(shellPre(ROOT, command, host), "workit hook guard"),
+        `${host[1]}: ${command}`,
+      ).toBe(true);
+  }
+});
+
+test("Given a ledger, When a loop variable, a case-folded or negated find test, a find -exec that empties files or rsync --del reaches it, Then every host denies it", () => {
+  for (const command of [
+    'for d in .git/w*; do rm -rf "$d"; done',
+    "for d in .git/workit; do rm -rf $d; done",
+    "find .git/workit -iname 'LEDGER.JSONL' -delete",
+    "find .git -ipath '*WORKIT*' -delete",
+    "find .git -iregex '.*LEDGER.*' -delete",
+    "find .git/workit ! -name x -delete",
+    "find .git/workit -not -name x -delete",
+    "find . ! -name '*.tmp' -delete",
+    "find .git/workit -type f -exec truncate -s0 {} +",
+    "find .git/workit -type f -exec cp /dev/null {} ';'",
+    "find .git/workit -type f -exec sh -c ': > \"$1\"' _ {} ';'",
+    `rsync -a --del ${tmp}/empty/ .git/workit`,
+  ])
+    for (const host of HOSTS)
+      expect(
+        deniedBy(shellPre(repo, command, host), "ledger guard"),
+        `${host[1]}: ${command}`,
+      ).toBe(true);
 });

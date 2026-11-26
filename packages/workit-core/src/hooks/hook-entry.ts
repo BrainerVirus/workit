@@ -363,6 +363,21 @@ const opaqueEntry = (
   return null;
 };
 
+/**
+ * A command word the shell builds (`$n`, `${n}`, `$(…)`, a backtick): what it runs is unknown, so
+ * the command is denied when any of its words names an entry (`n=bun; $n …/run.ts`).
+ */
+const expandedCommand = (words: readonly string[], scan: Scan): string | null => {
+  let at = 0;
+  while (/^[A-Za-z_]\w*=/u.test(words[at] ?? "")) at += 1;
+  if (!/[$`]/u.test(words[at] ?? "")) return null;
+  for (const word of words.slice(at + 1)) {
+    const hit = entryNamed(word, scan);
+    if (hit) return hit;
+  }
+  return null;
+};
+
 /** `NODE_OPTIONS`/`BUN_OPTIONS` set (before a command or exported) to load an entry. */
 const optionsEntry = (words: readonly string[], scan: Scan): string | null => {
   for (const word of words) {
@@ -384,8 +399,9 @@ const scanCommand = (command: string, dialect: ShellDialect, scan: Scan): string
   } catch {
     return null;
   }
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     if (segment.unanalyzable) continue;
+    bindLoop(segment.words, segments.slice(index + 1), scan);
     const words = pastKeywords(segment.words);
     const fed = scan.fed;
     scan.fed = null;
@@ -393,6 +409,30 @@ const scanCommand = (command: string, dialect: ShellDialect, scan: Scan): string
     if (hit) return hit;
   }
   return null;
+};
+
+/**
+ * A loop's variable bound like an assignment: `for|select NAME in <words>` to the word that names
+ * an entry (else the first), `while|until read NAME …; done <<< <word>` (or a heredoc) to the
+ * first line its `done` feeds.
+ */
+const bindLoop = (raw: readonly string[], after: readonly Segment[], scan: Scan): void => {
+  const at = raw.findIndex((word) => !KEYWORDS.has(word));
+  const verb = raw[at];
+  if ((verb === "for" || verb === "select") && raw[at + 2] === "in") {
+    const name = raw[at + 1] ?? "";
+    const items = raw.slice(at + 3);
+    const item = items.find((word) => entryNamed(word, scan)) ?? items[0];
+    if (/^[A-Za-z_]\w*$/u.test(name) && item !== undefined)
+      scan.vars.set(name, expand(item, scan.vars));
+    return;
+  }
+  const read = raw.indexOf("read");
+  if (read < 0 || !raw.slice(0, read).some((word) => word === "while" || word === "until")) return;
+  const fed = after.find((segment) => segment.words[0] === "done")?.stdin?.[0];
+  const line = fed?.split("\n")[0]?.trim();
+  const name = raw.slice(read + 1).find((word) => /^[A-Za-z_]\w*$/u.test(word));
+  if (name && line) scan.vars.set(name, line);
 };
 
 /** The entry one segment runs: its command, its nested scripts and substitutions. */
@@ -441,7 +481,10 @@ const segmentEntry = (
     for (const input of segment.inputs ?? [])
       if (entryNamed(input, scan)) for (const fd of words.slice(1)) scan.fds.add(fd);
   const inputs = segment.inputs ?? [];
-  const entry = runsEntry(words, inputs, scan) ?? opaqueEntry(words, inputs, { ...scan, fed });
+  const entry =
+    runsEntry(words, inputs, scan) ??
+    expandedCommand(words, scan) ??
+    opaqueEntry(words, inputs, { ...scan, fed });
   if (entry) return entry;
   // The words this segment pipes on: an entry they name reaches the next command's stdin.
   if (segment.pipe)
@@ -463,11 +506,14 @@ const segmentEntry = (
   const scripts = [...(segment.subs ?? [])];
   const script = shellScript(words) ?? cmdScript(words) ?? workitScript(words);
   if (script) scripts.push(script);
-  // A shell reading its script on stdin (`bash <<'EOF'`, `sh -s`) runs the heredoc.
+  // A shell reading its script on stdin (`bash <<'EOF'`, `sh -s`) runs the heredoc, and so do
+  // `at` and `batch`.
   if (
-    !script &&
-    /^(?:ba|z|da|k)?sh$/u.test(verb) &&
-    words.slice(1).every((word) => word.startsWith("-"))
+    (!script &&
+      /^(?:ba|z|da|k)?sh$/u.test(verb) &&
+      words.slice(1).every((word) => word.startsWith("-"))) ||
+    verb === "at" ||
+    verb === "batch"
   )
     scripts.push(...(segment.stdin ?? []));
   for (const text of scripts) {
@@ -497,6 +543,25 @@ const workitScript = (words: readonly string[]): string | null => {
   return dash < 0 ? null : words.slice(dash + 1).join(" ") || null;
 };
 
+/** The text of every `$(…)` in `command` (not `$((`), its parentheses balanced, at most 32. */
+const substitutions = (command: string): string[] => {
+  const found: string[] = [];
+  for (
+    let at = command.indexOf("$(");
+    at >= 0 && found.length < 32;
+    at = command.indexOf("$(", at + 1)
+  ) {
+    if (command[at + 2] === "(") continue;
+    let depth = 1;
+    let end = at + 2;
+    for (; end < command.length && depth > 0; end += 1)
+      if (command[end] === "(") depth += 1;
+      else if (command[end] === ")") depth -= 1;
+    found.push(command.slice(at + 2, end - 1));
+  }
+  return found;
+};
+
 /** The Workit hook entry `command` runs from `cwd`, or null when it runs none. */
 export const hookEntryRun = (
   cwd: string,
@@ -512,9 +577,13 @@ export const hookEntryRun = (
       fed: null,
       depth: 0,
     });
-  // An unquoted `C:\…` path loses its `\` to the POSIX reading: judged again with `/`.
+  // An unquoted `C:\…` path loses its `\` to the POSIX reading: judged again with `/`. Every
+  // `$(…)` is read on its own too, so one the reading drops (`(( $(…) ))`) still counts.
   return (
     scan(command) ??
+    substitutions(command)
+      .map((sub) => scan(sub))
+      .find(Boolean) ??
     (dialect === "posix" && /[A-Za-z]:\\/u.test(command)
       ? scan(command.replaceAll("\\", "/"))
       : null)

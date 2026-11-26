@@ -315,24 +315,29 @@ const removalsOf = (input: string[]): { files: string[]; find?: FindRemoval } =>
       files: into === undefined ? files.slice(0, -1) : files.filter((file) => file !== into),
     };
   }
-  if (name === "rsync" && args.some((arg) => arg.startsWith("--delete")))
+  if (name === "rsync" && args.some((arg) => /^--del(?:ete|$)/.test(arg)))
     return { files: files.slice(-1) };
   const removes = args.some(
     (arg, at) =>
       arg === "-delete" ||
-      (/^-exec(?:dir)?$/.test(arg) &&
-        /^(?:rm|rmdir|unlink|shred|mv)$/.test(commandName(args[at + 1] ?? ""))),
+      (/^-(?:exec|execdir|ok|okdir)$/.test(arg) &&
+        /^(?:rm|rmdir|unlink|shred|mv|truncate|cp|dd|tee|sh|bash|dash|zsh)$/.test(
+          commandName(args[at + 1] ?? ""),
+        )),
   );
   if (name !== "find" || !removes) return { files: [] };
   const end = args.findIndex((arg) => /^[-(!]/.test(arg));
   const roots = end === 0 ? ["."] : args.slice(0, end);
   const tests: Array<[string, string]> = [];
   for (const [at, arg] of args.entries()) {
-    const kind = /^-i?(name|path|wholename|regex)$/.exec(arg)?.[1];
+    const kind = /^-(i?)(?:name|path|wholename|regex)$/.exec(arg);
     const value = args[at + 1];
-    if (kind && value !== undefined) tests.push([kind, value]);
+    if (kind && value !== undefined)
+      tests.push([`${arg.replace(/^-i?/, "").replace("wholename", "path")}${kind[1]}`, value]);
   }
-  return { files: roots, find: { roots, tests } };
+  // A negated test is not read: the find is judged as if it had none.
+  const negated = args.some((arg) => arg === "!" || arg === "-not");
+  return { files: roots, find: { roots, tests: negated ? [] : tests } };
 };
 
 /**
@@ -2060,8 +2065,15 @@ const segmentTargets = (
     if (loop >= 0) {
       const [name = "", keyword, ...items] = segment.words.slice(loop + 1);
       const expanding = new Set(segment.expands ?? []);
-      const list = items.flatMap((item, index) =>
-        expanding.has(loop + 3 + index) ? listWords(item) : [listWord(homeExpanded(item))],
+      // The registry guard expands a glob item the way the shell will (`for d in .git/w*`).
+      const globbedItem = (item: string): string[] | null =>
+        strict === "registry" && dir !== undefined && /[*?[]/.test(item)
+          ? expandGlob(path.resolve(dir, homeExpanded(item)))
+          : null;
+      const list = items.flatMap(
+        (item, index) =>
+          globbedItem(item) ??
+          (expanding.has(loop + 3 + index) ? listWords(item) : [listWord(homeExpanded(item))]),
       );
       vars.delete(name);
       if (
@@ -2804,24 +2816,27 @@ const findReachesLedger = (
     const rel = path.relative(parent, child);
     return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
   };
-  const patterns = find.tests.map(([kind, pattern]) => ({
-    kind,
-    test:
-      kind === "regex"
-        ? (() => {
-            try {
-              return new RegExp(`^${pattern}$`);
-            } catch {
-              return /(?:)/;
-            }
-          })()
-        : (globPattern(pattern, true) ?? /(?:)/),
-  }));
+  // `-iname`, `-ipath`, `-iregex` (a kind ending in `i`) match without case.
+  const patterns = find.tests.map(([kind, pattern]) => {
+    const fold = kind.endsWith("i");
+    const glob = globPattern(pattern, true);
+    let test = /(?:)/;
+    try {
+      test = kind.startsWith("regex")
+        ? new RegExp(`^${pattern}$`, fold ? "i" : "")
+        : glob
+          ? new RegExp(glob.source, fold ? "iu" : "u")
+          : test;
+    } catch {
+      // A test Workit cannot read matches every entry.
+    }
+    return { kind, test };
+  });
   const matches = (entry: string) =>
     patterns.length === 0 ||
     patterns.some(({ kind, test }) =>
       test.test(
-        kind === "name"
+        kind.startsWith("name")
           ? path.basename(entry)
           : path.join(find.root, path.relative(real, entry)).replaceAll("\\", "/"),
       ),
