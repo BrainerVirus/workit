@@ -78,7 +78,7 @@ import {
   sameOwnChange,
   worktreeTree,
 } from "./git/rev";
-import { hostSessionFromEnv, issuedBinding } from "./host-session";
+import { hostSessionFromEnv, issuedBinding, STAMPING_HOSTS } from "./host-session";
 import { bumpStandingRev } from "./hooks/standing-signal";
 import { resolveStore } from "./store/paths";
 
@@ -2723,17 +2723,31 @@ export function recordVerdictVoid(
 const CHECKED_RESULTS: ReadonlySet<string> = new Set(["verified", "tests-verified"]);
 
 /**
- * Whose `workit check` rows a verdict session is held to. A host-derived id
- * `S:a` owns the rows stamped session S and agent id a (Claude Code and Codex:
- * the CLI claims the agent stamp its hook wrote, agent-stamp.ts) and the rows
- * stamped with the whole `S:a` (an OpenCode or Pi child's own shell); a plain
- * session S owns its rows with no agent id. A call the hook could not stamp
- * (hosts.md#host-parity) reads as the lead's: never a false refusal, it only
- * narrows who is held.
+ * Whose `workit check` rows a verdict session is held to (#972).
+ *
+ * Stamp mode (`stampBound`: the verdict's session was issued by a
+ * SubagentStart hook, or its host is a STAMPING_HOSTS one, Claude Code or
+ * Codex): only rows whose agent id a claimed hook stamp named
+ * (`agentFrom: "stamp"`, agent-stamp.ts) count. A subagent `S:a` owns the
+ * stamped rows of session S and agent a; a lead S its stamped rows with no
+ * agent id. An unstamped (`none`), environment-named (`env`) or legacy row,
+ * and a row under the whole `S:a`, are nobody's: an id the shell forged binds
+ * nothing.
+ *
+ * Otherwise (OpenCode, Pi, Cursor, CI, a terminal): `S:a` owns the rows of
+ * session S and agent id a and the rows under the whole `S:a` (an OpenCode or
+ * Pi child's own shell, a Cursor declared verifier); a plain session S owns
+ * its rows with no agent id.
  */
-function sessionOwnsRun(session: string, row: ReadRow): boolean {
+function sessionOwnsRun(session: string, row: ReadRow, stampBound: boolean): boolean {
   const colon = session.indexOf(":");
   const agent = row.actor.agentId ?? null;
+  if (stampBound)
+    return (
+      row.agentFrom === "stamp" &&
+      row.actor.session === (colon > 0 ? session.slice(0, colon) : session) &&
+      agent === (colon > 0 ? session.slice(colon + 1) : null)
+    );
   if (row.actor.session === session && agent === null) return true;
   return (
     colon > 0 && row.actor.session === session.slice(0, colon) && agent === session.slice(colon + 1)
@@ -2756,6 +2770,8 @@ function evidenceOffHead(
     branch: string;
     head: string;
     session: string | null;
+    /** Hold the session only to stamp-bound rows (sessionOwnsRun). */
+    stampBound: boolean;
     refs: readonly string[];
     ciCovered: ReadonlySet<string>;
   },
@@ -2777,12 +2793,12 @@ function evidenceOffHead(
       !cited.some((other) => onHead(other) && str(other.name) !== null && other.name === row.name),
   );
   if (!input.session) return named;
-  const session = input.session;
+  const { session, stampBound } = input;
   const latest = new Map<string, ReadRow>();
   const cleared = new Set<string>();
   for (const row of runs) {
     const name = str(row.name);
-    if (!name || row.branch !== input.branch || !sessionOwnsRun(session, row)) continue;
+    if (!name || row.branch !== input.branch || !sessionOwnsRun(session, row, stampBound)) continue;
     // An ad-hoc `--name <n> -- <cmd>` never stands in for a configured run of <n>.
     if (latest.get(name)?.configured === true && row.configured !== true) continue;
     latest.set(name, row);
@@ -2790,7 +2806,8 @@ function evidenceOffHead(
   for (const row of runs) {
     const name = str(row.name);
     const last = name ? latest.get(name) : undefined;
-    if (!name || !last || row.branch !== input.branch || !sessionOwnsRun(session, row)) continue;
+    if (!name || !last || row.branch !== input.branch || !sessionOwnsRun(session, row, stampBound))
+      continue;
     if (onHead(row) && (last.configured !== true || row.configured === true)) cleared.add(name);
   }
   const stale = [...latest.entries()]
@@ -2914,6 +2931,10 @@ export function recordVerdict(
           branch,
           head: key.head,
           session,
+          stampBound:
+            session !== null &&
+            (STAMPING_HOSTS.has(context.actor.host) ||
+              issuedBinding(context.cwd, session) !== null),
           refs: input.evidenceRefs ?? [],
           ciCovered: new Set(
             (input.checkEvidence ?? [])

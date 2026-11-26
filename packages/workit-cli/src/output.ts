@@ -4,6 +4,7 @@
 // same exit codes everywhere. Kept dependency-free: the router loads it on the
 // cold path.
 
+import type { AgentFrom } from "@workit-dev/core/src/agent-stamp";
 import { createStyle, type TerminalStream } from "./style";
 
 export type EnvelopeCode =
@@ -60,6 +61,11 @@ export type Io = {
   /** `--cwd <dir>` resolved to an absolute path (default: process.cwd()). */
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /**
+   * Where `env`'s WORKIT_AGENT_ID came from (#972): a claimed hook stamp, the
+   * caller's environment (no host), or nowhere. Unset: a verb run without main.
+   */
+  agentFrom?: AgentFrom;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   /**

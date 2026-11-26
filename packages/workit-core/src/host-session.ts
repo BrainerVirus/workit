@@ -30,6 +30,17 @@ const HOST_SESSION_VARS: ReadonlyArray<readonly [string, (env: NodeJS.ProcessEnv
   ],
 ];
 
+/**
+ * Hosts whose hook stamps every plain `workit` call with its calling agent
+ * (agent-stamp.ts): there a verdict is held only to the check rows a claimed
+ * stamp names (ledger.ts `sessionOwnsRun`, #972).
+ */
+export const STAMPING_HOSTS: ReadonlySet<string> = new Set([
+  "claude_code",
+  "codex_cli",
+  "codex_desktop",
+]);
+
 const family = (host: string | null): string | null =>
   host?.replace(/_(?:cli|desktop)$/, "") ?? null;
 

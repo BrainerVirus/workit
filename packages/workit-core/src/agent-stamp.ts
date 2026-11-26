@@ -7,9 +7,11 @@
 // calling agent, leaves a stamp per plain `workit …` call it lets through:
 // `<state>/agent-stamps/<session hash>/<argv hash>.<agent id or empty>.<nonce>`,
 // written for the lead's calls too. The CLI claims the stamp its own session
-// and argv name and acts with that WORKIT_AGENT_ID. No stamp, a stale one or
-// two callers with one argv (ambiguous) leave the id unset: a run then reads
-// as the lead's, never as another agent's. Every failure is silent.
+// and argv name and acts with that WORKIT_AGENT_ID; its check row records
+// `agentFrom: "stamp"` (#972). No stamp, a stale one or two callers with one
+// argv (ambiguous) leave the id unset and the row `agentFrom: "none"`: on a
+// stamping host (host-session.ts STAMPING_HOSTS) a verdict is held only to stamped rows, so
+// such a run is nobody's, never another agent's. Every failure is silent.
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,6 +19,12 @@ import { stateDir } from "./core/workit-paths.mjs";
 import { hostSessionFromEnv, realHostSession } from "./host-session";
 import { unwrapped } from "./hooks/delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./hooks/shell-words";
+
+/**
+ * Where a check row's agent id came from (#972): a claimed stamp, the caller's
+ * WORKIT_AGENT_ID (no host), or nowhere (a host and no stamp to claim).
+ */
+export type AgentFrom = "stamp" | "env" | "none";
 
 /** How long a stamp waits for its call to start (a permission prompt included). */
 const STAMP_TTL_MS = 120_000;
@@ -127,10 +135,14 @@ export const agentIdFromHostOnly = (env: NodeJS.ProcessEnv): boolean =>
   realHostSession(env).kind !== "none" || HOST_SET.some((name) => env[name]?.trim());
 
 /**
- * CLI: the agent id the stamp for this session and `argv` names, consuming
- * it; null for a lead's call or when no single fresh stamp answers.
+ * CLI: the stamp for this session and `argv`, consuming it: `agentId` names
+ * the subagent, or is null for the lead's own call. Null when no single fresh
+ * stamp answers (none, stale or ambiguous).
  */
-export const claimAgentStamp = (env: NodeJS.ProcessEnv, argv: readonly string[]): string | null => {
+export const claimAgentStamp = (
+  env: NodeJS.ProcessEnv,
+  argv: readonly string[],
+): { agentId: string | null } | null => {
   const { session } = hostSessionFromEnv(env);
   if (!session) return null;
   try {
@@ -148,7 +160,7 @@ export const claimAgentStamp = (env: NodeJS.ProcessEnv, argv: readonly string[])
     if (agents.size !== 1 || !oldest) return null;
     // Another call claiming it first throws here: that call was the stamped one.
     fs.unlinkSync(path.join(dir, oldest.name));
-    return oldest.name.split(".")[1] || null;
+    return { agentId: oldest.name.split(".")[1] || null };
   } catch {
     return null;
   }
