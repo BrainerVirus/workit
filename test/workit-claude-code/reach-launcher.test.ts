@@ -114,3 +114,32 @@ test("G any text with `workit` and a user-only first word, W the launcher reads 
   for (const command of ["workit task status", "workit doctor", "echo setup grant"])
     expect(shell(plain, command), command).toBe(false);
 }, 180_000);
+
+test("G a subagent's `workit` call (#883), W the launcher reads it, T it goes to the runtime, which stamps its agent; the lead's stays fast", () => {
+  const call = (command: string, agent: Record<string, string>) =>
+    runHook(
+      PLUGIN_DIR,
+      {
+        hook_event_name: "PreToolUse",
+        session_id: "11111111-2222-3333-4444-555555555555",
+        transcript_path: "/tmp/x.jsonl",
+        cwd: plain,
+        permission_mode: "default",
+        tool_name: "Bash",
+        tool_input: { command, description: "d" },
+        tool_use_id: "toolu_stamp",
+        ...agent,
+      },
+      env,
+    ).stderr.includes("hook unavailable");
+  const verifier = { agent_id: "a1", agent_type: "general-purpose" };
+  for (const command of [
+    "workit check lint",
+    "cd x && /usr/bin/workit check test",
+    "(workit doctor)",
+  ])
+    expect(call(command, verifier), command).toBe(true);
+  for (const command of ["echo workitx", "ls workit-notes"])
+    expect(call(command, verifier), command).toBe(false);
+  expect(call("workit check lint", {})).toBe(false);
+}, 180_000);

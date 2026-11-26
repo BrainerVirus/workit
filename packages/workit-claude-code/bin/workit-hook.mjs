@@ -170,6 +170,8 @@ for await (const chunk of process.stdin) payload += String(chunk);
 const RAW_TOOLS = /\b(?:git|gh|glab)\b/;
 const WORKIT_DELIVERY =
   /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
+// A subagent's `workit` call gets its agent stamp in the runtime (src/agent-stamp.ts, #883).
+const WORKIT_CALL = /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:\s|$)/;
 // The runtime moves the verb first (`cd <dir> && workit …`, `workit --cwd
 // <dir> <verb>`) so Workit's enumerated allow rules match (hooks/cwd-normalize.ts).
 const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*--cwd[\s=])/;
@@ -750,6 +752,7 @@ const fastAllow = (() => {
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (
         WORKIT_DELIVERY.test(command) ||
+        (value.agent_id && WORKIT_CALL.test(command)) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         WORKIT_INLINE_ASK.test(command) ||

@@ -53,6 +53,7 @@ import { liveOwner } from "../core/live-session";
 import { liveTargets, shellGate, writeGate } from "./write-gate";
 import { ytrackGate } from "./ytrack-guard";
 import { exitPipeGate } from "./exit-pipe";
+import { noteAgentStamps } from "../agent-stamp";
 import {
   confineImplementer,
   confineImplementerShell,
@@ -405,6 +406,16 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         !lease && input.host === "claude_code"
           ? workitBypassFlag(event.command, event.dialect)
           : null;
+      // Each `workit` call carries its agent to the CLI (#883): no host puts a
+      // subagent's id in its shell, and a changed command loses its allow rule.
+      if (descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool))
+        noteAgentStamps(
+          process.env,
+          input.session.id,
+          input.session.agentId,
+          lease?.command ?? cwdCommand ?? event.command,
+          event.dialect,
+        );
       if (bypass) return { kind: "ask", reason: bypass };
       const rewrittenTo = lease?.command ?? cwdCommand;
       const rewritten = (text: string | null): HookDecision =>

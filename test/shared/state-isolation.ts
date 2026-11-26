@@ -21,7 +21,13 @@ guardRealHome();
 // host) exports its own session id, which the CLI treats as the real session:
 // a test's own WORKIT_SESSION_ID would then read as forged. Tests that need a
 // host session set these themselves.
-for (const key of ["OPENCODE_SESSION_ID", "PI_SESSION_ID", "CODEX_THREAD_ID", "WORKIT_HOST"])
+for (const key of [
+  "OPENCODE_SESSION_ID",
+  "PI_SESSION_ID",
+  "CODEX_THREAD_ID",
+  "WORKIT_HOST",
+  "WORKIT_AGENT_ID",
+])
   delete process.env[key];
 
 // A shell's (or CI runner's) XDG dirs would point a test that sets only HOME

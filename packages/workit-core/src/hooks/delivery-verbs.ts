@@ -123,7 +123,7 @@ const WRAPPERS = new Set(["env", "sudo", "nohup", "command", "timeout", "nice", 
 const VALUED = /^-(?:[ugnskCpD]|-user|-group|-signal|-kill-after|-unset|-chdir)$/u;
 
 /** `words` past env assignments and wrappers (`env X=1`, `sudo -u u`, `timeout 9`, `nohup`). */
-const unwrapped = (words: readonly string[]): readonly string[] => {
+export const unwrapped = (words: readonly string[]): readonly string[] => {
   let at = 0;
   for (;;) {
     const word = words[at] ?? "";

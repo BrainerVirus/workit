@@ -11,6 +11,7 @@ import {
   stateDir as workitStateDir,
 } from "@workit-dev/core/src/core/workit-paths.mjs";
 import { sessionClaimRefusal } from "@workit-dev/core/src/host-session";
+import { claimAgentStamp } from "@workit-dev/core/src/agent-stamp";
 import pkg from "../package.json" with { type: "json" };
 import {
   checkFlags,
@@ -192,6 +193,12 @@ export async function main(
       moved,
     );
   if (parsed.error) return emit(io, fail("invalid_input", parsed.error));
+  // The calling subagent, as the host hook stamped this call (#883).
+  const agent = claimAgentStamp(io.env, argv);
+  if (agent) {
+    io.env = { ...io.env, WORKIT_AGENT_ID: agent };
+    if (overrides.env === undefined) process.env.WORKIT_AGENT_ID = agent;
+  }
   if (parsed.session !== undefined) {
     // The same gate the env var meets (verdicts, commits): where the host's
     // session is checked, the flag cannot name another one.
