@@ -61,6 +61,16 @@ lead writes that entry on each slice branch.
 commits it with a conventional subject commitlint accepts, pushes and opens the PR in one call
 ([changelog gate](delivery.md#changelog-gate)).
 
+Before it adds an entry, `apply` (and so `pr create --changelog`) runs the same roll as
+`workit changelog roll` with the same tag prefix: `[Unreleased]` entries a release tag already
+holds move into that release's section, in the same write and the same commit, so a repo whose
+release never commits back to the trunk catches up with every PR that adds an entry. The output
+counts them (`moved 2 shipped entries from [Unreleased] into [1.4.0]`), and `--json` returns them
+as `data.rolled`. This is always on; there is no setting for it. Without release tags, in a
+shallow clone or outside a git repo nothing moves and nothing is printed. When the roll would
+double or drop text (see below), `apply` still adds the entry, moves nothing and prints a warning
+that names the problem and `workit changelog roll` as the fix; it never blocks the PR.
+
 ## Releasing the entries
 
 Entries written under `## [Unreleased]` stay there until something moves them. Two local verbs do

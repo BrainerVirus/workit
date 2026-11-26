@@ -5,11 +5,18 @@
 //   workit changelog apply (--entries <JSON> | --normalize-only) [--path CHANGELOG.md] [--preview]
 //
 // --entries takes `{"Added": ["…"], "Fixed": ["…"]}` or `[{"category", "text"}]`
-// (`@file` reads it from a file, `-` from stdin). `roll` and `release` live in
+// (`@file` reads it from a file, `-` from stdin). Before adding them, apply
+// moves the [Unreleased] entries a release tag already holds into that
+// release, as `workit changelog roll` does. `roll` and `release` live in
 // changelog-roll.ts.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { changelogApply, changelogApplyPreview } from "@workit-dev/core/src/core/changelog";
+import {
+  changelogApply,
+  changelogApplyPreview,
+  rolledNote,
+  type ApplyRoll,
+} from "@workit-dev/core/src/core/changelog";
 import {
   installChangelogDriver,
   mergeChangelogFiles,
@@ -102,12 +109,19 @@ export async function run(argv: string[], io: Io): Promise<number> {
   if (flags.booleans.has("preview")) {
     const preview = changelogApplyPreview(input);
     if (preview.error) return emit(io, fail("invalid_input", String(preview.error)));
+    warnRoll(io, preview.rolled);
     const { after, ...summary } = preview;
     return emit(io, ok({ ...summary, after }), () => [String(after)]);
   }
   const applied = changelogApply(input);
   if (applied.error) return emit(io, fail("failed", String(applied.error)));
+  warnRoll(io, applied.rolled);
   return emit(io, ok(applied), () => [
-    `changelog updated: ${String(applied.path ?? "CHANGELOG.md")}`,
+    `changelog updated: ${String(applied.path ?? "CHANGELOG.md")}${rolledNote(applied.rolled)}`,
   ]);
+}
+
+/** The roll's refusal, on stderr: the entry is in, the shipped ones stay put. */
+function warnRoll(io: Io, rolled: ApplyRoll | undefined): void {
+  if (rolled?.warning && !io.json) io.stderr(`workit: warning: ${rolled.warning}\n`);
 }

@@ -106,7 +106,7 @@ import {
 import { prLaneGate } from "@workit-dev/core/src/core/policy/pr-lane";
 import { vcsConfig, type ResolvedReleaseTrack } from "@workit-dev/core/src/core/vcs-config";
 import { checkRoot } from "@workit-dev/core/src/check-config";
-import { changelogApply } from "@workit-dev/core/src/core/changelog";
+import { changelogApply, rolledNote } from "@workit-dev/core/src/core/changelog";
 import { issueTarget } from "@workit-dev/core/src/forge/issue-ops";
 import { shellQuote } from "../install/paths";
 import { run as runGit } from "./git";
@@ -1138,6 +1138,7 @@ async function addChangelogEntry(
       io,
       fail("failed", `changelog entry not written to ${gate.file}: ${String(applied.error)}`),
     );
+  if (applied.rolled?.warning) io.stderr(`workit: warning: ${applied.rolled.warning}\n`);
   const scope = /^\w+\(([^)]*)\)/u.exec(title)?.[1];
   const subject = `docs(${scope ? `${scope}` : "changelog"}): add the changelog entry`;
   const quiet: Io = { ...io, cwd: top, json: false, stdout: () => {} };
@@ -1168,7 +1169,7 @@ async function addChangelogEntry(
     );
   if (!io.json)
     io.stdout(
-      `changelog: added "${entry.section}: ${entry.text}" to ${gate.file}, committed (${subject}) and pushed\n`,
+      `changelog: added "${entry.section}: ${entry.text}" to ${gate.file}${rolledNote(applied.rolled)}, committed (${subject}) and pushed\n`,
     );
   return 0;
 }
