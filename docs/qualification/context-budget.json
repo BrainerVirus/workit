@@ -1,7 +1,7 @@
 {
   "bootstrap.invariant": 4170,
   "hook.session-start.claude-code": 4552,
-  "hook.session-start.codex": 5063,
+  "hook.session-start.codex": 5006,
   "hook.session-start.cursor": 4538,
   "hook.subagent-start.implementer": 1268,
   "hook.subagent-start.implementer-isolated": 1319,
