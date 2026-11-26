@@ -205,6 +205,9 @@ const agentsOf = (root: string) => {
 };
 const runCheck = (root: string, env: NodeJS.ProcessEnv) => {
   const base: NodeJS.ProcessEnv = { ...process.env, WORKIT_WORKSPACE_ROOT: "", WORKIT_LEASE: "" };
+  // The suite may itself run under a host: each case names the host it means.
+  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "WORKIT_SESSION_ID"])
+    delete base[name];
   return spawnSync(BUN, [MAIN, "check", "--json", "--cwd", root, "ok"], {
     env: { ...base, ...env },
     encoding: "utf8",
@@ -233,6 +236,14 @@ test("Given an agent shell that exports its own WORKIT_AGENT_ID, When workit run
   expect(runCheck(root, { CODEX_THREAD_ID: newSession(), WORKIT_AGENT_ID: "forged" })).toBe(0);
   expect(runCheck(root, { WORKIT_SESSION_ID: session, WORKIT_AGENT_ID: "ci-run" })).toBe(0);
   expect(agentsOf(root)).toEqual([null, "a1", null, "ci-run"]);
+});
+
+test("Given a Claude Code shell whose WORKIT_HOST was cleared, When it exports a forged WORKIT_AGENT_ID, Then the host's own variables still read as a host and the id is ignored", () => {
+  const root = checkRepo();
+  const forged = { WORKIT_SESSION_ID: newSession(), WORKIT_AGENT_ID: "forged" };
+  expect(runCheck(root, { ...forged, CLAUDECODE: "1", WORKIT_HOST: "" })).toBe(0);
+  expect(runCheck(root, { ...forged, CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe(0);
+  expect(agentsOf(root)).toEqual([null, null]);
 });
 
 test("Given an OpenCode child whose shell carries <lead>:<child>, When it runs a check with an exported WORKIT_AGENT_ID, Then its row keeps its own session and no forged agent", () => {

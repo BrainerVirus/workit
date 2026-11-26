@@ -54,6 +54,7 @@ import { liveTargets, shellGate, writeGate } from "./write-gate";
 import { ytrackGate } from "./ytrack-guard";
 import { exitPipeGate } from "./exit-pipe";
 import { dropAgentStamps, noteAgentStamps } from "../agent-stamp";
+import { identityEnvChange, identityEnvDeny } from "./identity-env";
 import {
   confineImplementer,
   confineImplementerShell,
@@ -75,6 +76,9 @@ export type HookDeps = {
 };
 
 const usable = (value: Support) => value === "native" || value === "partial";
+/** Hosts whose hooks stamp each `workit` call with its agent (#883): Claude Code, Codex. */
+const stampsAgents = (descriptor: HostDescriptor): boolean =>
+  descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool);
 const NONE: HookDecision = { kind: "none" };
 
 const resendsOnChange = (descriptor: HostDescriptor): boolean =>
@@ -291,6 +295,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const skillRead = skillReadIn(event.command, event.dialect);
       if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);
+      // Where hooks stamp the agent (#883), the identity variables are the host's.
+      const identity =
+        canDeny && stampsAgents(descriptor)
+          ? identityEnvChange(event.command, event.dialect)
+          : null;
+      if (identity) return { kind: "deny", reason: identityEnvDeny(identity), unblock: null };
       const policy = canDeny ? shellPolicy(input.cwd, event.command, event.dialect) : NONE;
       if (policy.kind !== "none") return policy;
       // A raw `ytrack` write asks the user first (#780); Claude Code asks natively.
@@ -408,7 +418,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
           : null;
       // Each `workit` call carries its agent to the CLI (#883): no host puts a
       // subagent's id in its shell, and a changed command loses its allow rule.
-      if (descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool))
+      if (stampsAgents(descriptor))
         noteAgentStamps(
           process.env,
           input.session.id,
@@ -456,7 +466,7 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "shell.post":
       if (usable(descriptor.events["shell.post"].support))
         rawGitPost(input, event.command, callKey(event.toolUseId, event.command));
-      if (descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool))
+      if (stampsAgents(descriptor))
         dropAgentStamps(process.env, input.session.id, event.toolUseId, event.command);
       return NONE;
     case "write.pre": {

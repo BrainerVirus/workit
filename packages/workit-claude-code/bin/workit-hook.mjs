@@ -173,6 +173,10 @@ const WORKIT_DELIVERY =
   /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
 // A subagent's `workit` call gets its agent stamp in the runtime (src/agent-stamp.ts, #883).
 const WORKIT_CALL = /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:\s|$)/;
+// A command that may set, unset or clear an identity variable goes to the
+// runtime's identity guard (hooks/identity-env.ts, #883): `NAME=`, `env -u`, `env -i`.
+const IDENTITY_ENV =
+  /WORKIT_(?:AGENT_ID|HOST|SESSION_ID|SESSION_TOKEN)|\benv\b[^\n;&|]*\s(?:-[a-z]*i|--ignore-environment|-)(?:\s|$)/;
 // A lead's `workit` call goes too while a subagent's stamp waits to be claimed
 // (its call at a permission prompt, say): the runtime stamps the lead's call,
 // so one argv from two actors is ambiguous and neither claims the other's id.
@@ -773,6 +777,7 @@ const fastAllow = (() => {
       if (
         WORKIT_DELIVERY.test(command) ||
         (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
+        IDENTITY_ENV.test(command.replace(/['"\\]/g, "")) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         WORKIT_INLINE_ASK.test(command) ||

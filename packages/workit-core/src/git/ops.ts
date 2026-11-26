@@ -1063,7 +1063,7 @@ export function gitCommit(
       return failure(
         "blocked",
         `judge_session: ${session} was issued to a verifier or reviewer subagent; it records verdicts and never authors commits`,
-        "commit from the implementer's or the lead's own session (unset WORKIT_SESSION_ID back to the shell's)",
+        "commit from the implementer's or the lead's own session (drop the --session flag; a terminal unsets the WORKIT_SESSION_ID it exported)",
       );
     const refusal = sessionClaimRefusal(env, session, cwd);
     if (refusal)

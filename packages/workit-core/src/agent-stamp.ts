@@ -106,13 +106,25 @@ export const dropAgentStamps = (
 };
 
 /**
+ * Variables a host itself puts in its shell, so clearing WORKIT_HOST alone
+ * does not read as no host (clearing them all, `env -i`, the hook denies).
+ */
+const HOST_SET = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CODEX_THREAD_ID",
+  "OPENCODE_SESSION_ID",
+  "PI_SESSION_ID",
+];
+
+/**
  * Whether this shell runs under an agent host. There only a claimed stamp
  * names the agent (Claude Code, Codex; OpenCode and Pi children carry their
  * own `<lead>:<child>` session instead): a WORKIT_AGENT_ID the caller exported
  * is not the host's word, as an unissued `<lead>:<x>` session is not.
  */
 export const agentIdFromHostOnly = (env: NodeJS.ProcessEnv): boolean =>
-  realHostSession(env).kind !== "none";
+  realHostSession(env).kind !== "none" || HOST_SET.some((name) => env[name]?.trim());
 
 /**
  * CLI: the agent id the stamp for this session and `argv` names, consuming

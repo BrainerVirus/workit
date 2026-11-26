@@ -138,7 +138,7 @@ export const unwrapped = (words: readonly string[]): readonly string[] => {
 };
 
 /** The script a shell runs with `-c` (`bash -c "…"`, `sudo sh -lc -- '…'`) or `eval` runs, or null. */
-const shellScript = (all: readonly string[]): string | null => {
+export const shellScript = (all: readonly string[]): string | null => {
   const words = unwrapped(all);
   const name = words[0]?.split("/").at(-1) ?? "";
   if (name === "eval") return words.slice(1).join(" ") || null;
