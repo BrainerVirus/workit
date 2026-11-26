@@ -1405,8 +1405,18 @@ fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
   `find -delete`, or a `python -c`, `node -e` or `node -p` script that may
   write, delete, run a command or load code) counts as a change in the
   directory it runs in. An inline script that only reads (f-strings, template
-  literals, whole-line comments and division included) changes nothing, and
-  a link inside the worktree may not point outside
+  literals, whole-line comments and division included) changes nothing when
+  it imports only the modules Workit reads: `json`, `re`, `pathlib`,
+  `os.path`, `sys.argv`/`stdin`/`stdout`, Node's `path`, `url`, `util` and
+  `fs` reads (`readFileSync`, `readdirSync`, `statSync`, `existsSync`…),
+  among others; any other import, a module used other than as `name.member`,
+  `process` past `argv`/`env`/`cwd`/`stdout`, `awk` that runs a command or
+  prints to a file, `sed` with `w` or `e`, `deno eval` and `tsx -e` count as
+  writers, and so do wrappers whose command Workit does not follow (`flock`,
+  `ssh`, `watch`, `strace`). A verifier or reviewer refused this way is told
+  which import or name it was, and is told to retry from its scratch dir
+  when the script reads no relative path, else to read with `cat`, `jq`,
+  `grep` or the Read tool. A link inside the worktree may not point outside
   it. A refusal is two lines: what was refused, then the exact `Retry as:` call
   (an interpreter run elsewhere becomes `cd <worktree> && …`) or why none
   exists. After a `cd -`, `cd "$VAR"` or
