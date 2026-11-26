@@ -345,7 +345,11 @@ const afterEnv = (words: readonly string[]): boolean => {
     at >= 0 &&
     words
       .slice(at + 1)
-      .every((word, index, rest) => /^-|=/.test(word) || /^-[uCS]$/.test(rest[index - 1] ?? ""))
+      .every(
+        (word, index, rest) =>
+          /^-|=/.test(word) ||
+          /^-[^-]*[uCS]$|^--(?:unset|chdir|split-string)$/.test(rest[index - 1] ?? ""),
+      )
   );
 };
 

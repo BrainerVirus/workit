@@ -438,3 +438,65 @@ test("Given an implementer outside its worktree or a verifier, When a shell read
   // In its own worktree the implementer's writes are its own.
   allowed(implementer, ["bash <<'EOF'\ntouch x\nEOF", "env 'A b=1' touch x"]);
 });
+
+// #956 verification mwwyoapt: a path rename through `.replace` with a trailing comma or keyword,
+// a later inline-code argument or loader option, env's other option spellings, eval, process
+// substitutions, `source /dev/stdin`, the common wrappers and json.tool with an output file.
+test("Given verification mwwyoapt's forms, When a judge or an implementer outside its worktree runs them, Then each write is denied and the read-only forms run", () => {
+  const writers = [
+    `python3 -c "from pathlib import Path; Path('a').replace('b',)"`,
+    `python3 -c "from pathlib import Path; Path('a').replace(target='b', )"`,
+    `python3 -c "from pathlib import Path; Path('a').replace(*['b'], *[])"`,
+    `node --eval="1" --eval="require('fs').writeFileSync('x','a')"`,
+    `node -e 1 -e "require('fs').writeFileSync('x','a')"`,
+    `node -p 1 -e "require('fs').writeFileSync('x','a')"`,
+    `python3 -c "print(1)" -c "open('x','w')"`,
+    "node -e 1 -r ./f.js",
+    "node -e 1 --require ./f.js",
+    "node -e 1 --import=./f.mjs",
+    `env -S"rm -rf src"`,
+    "env --split-string='rm -rf src'",
+    "env --split-string 'rm -rf src'",
+    "env -iS 'rm -rf src'",
+    "env -iu X rm -rf src",
+    "eval 'rm -rf src'",
+    "bash <(echo 'rm -rf src')",
+    "source <(echo 'rm -rf src')",
+    ". <(echo 'rm -rf src')",
+    ". /dev/stdin <<'EOF'\nrm -rf src\nEOF",
+    "source /dev/stdin <<'EOF'\nrm -rf src\nEOF",
+    "bash /dev/stdin <<'EOF'\nrm -rf src\nEOF",
+    "timeout 5 rm -rf src",
+    "nice -n 5 rm -rf src",
+    "setsid rm -rf src",
+    "stdbuf -o0 rm -rf src",
+    "flock /tmp/l rm -rf src",
+    "flock /tmp/l -c 'rm -rf src'",
+    "ionice -c3 rm -rf src",
+    "nohup rm -rf src",
+    "! rm -rf src",
+    `timeout 5 python3 -c "open('x','w')"`,
+    "python3 -m json.tool package.json out.json",
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  const reads = [
+    `python3 -c "print('a'.replace('a','b'))"`,
+    `python3 -c "print('aa'.replace('a','b', count=1))"`,
+    `node -e "console.log('a'.replace(/a/g, m => m + 'b'))"`,
+    `node -e "console.log(1)" package.json`,
+    "python3 -m json.tool package.json",
+    "python3 -m json.tool --indent 4 package.json",
+    "timeout 5 ls src",
+  ];
+  allowed(verifier, reads);
+  allowed(
+    implementer,
+    reads.map((command) => `cd ${lead} && ${command}`),
+  );
+  allowed(implementer, ["eval 'touch x'", "timeout 5 touch x"]);
+});

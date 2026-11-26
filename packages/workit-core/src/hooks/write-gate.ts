@@ -128,20 +128,38 @@ const operands = (words: string[]) => words.filter((item) => !item.startsWith("-
 const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 
 /**
- * The command past leading assignments and PREFIXES (up to an `xargs`), with
- * `env`'s options: `-u NAME` and `-C DIR` take a value, `-S '<line>'` splits
- * its line into the command.
+ * The command past leading assignments, PREFIXES (up to an `xargs`) and
+ * wrappers (`timeout 5`, `nice -n 5`, `setsid`, `stdbuf -o0`, `ionice -c3`,
+ * `flock <file>`, `!`), with `env`'s options: `-u NAME` and `-C DIR` take a
+ * value (also in a cluster, `-iu NAME`), and `-S '<line>'`, `-iS'<line>'` or
+ * `--split-string[=]<line>` split the line into the command.
  */
 const pastLead = (input: readonly string[]): string[] => {
   let words = [...input];
   for (let env = false; words.length && words[0] !== "xargs";) {
     const [word, next = ""] = words;
-    if (env && /^-S$|^--split-string$/.test(word))
-      words = [...next.split(/\s+/).filter(Boolean), ...words.slice(2)];
-    else if (PREFIXES.has(word) || /^\w+\+?=/.test(word) || (env && word.startsWith("-")))
-      words = words.slice(env && /^-[uC]$/.test(word) ? 2 : 1);
+    const name = word.split(/[\\/]/).at(-1) ?? "";
+    const split = env ? /^(?:-[^-S]*S|--split-string=?)(.*)$/s.exec(word) : null;
+    let at = 1;
+    if (split)
+      words = [
+        ...(split[1] || next).split(/\s+/).filter(Boolean),
+        ...words.slice(split[1] ? 1 : 2),
+      ];
+    else if (env && word.startsWith("-"))
+      words = words.slice(/^-[^-]*[uC]$|^--(?:unset|chdir)$/.test(word) ? 2 : 1);
+    else if (name === "flock") {
+      // `flock [options] <file> <command…>`, or `flock [options] <file> -c '<command>'`.
+      while (words[at]?.startsWith("-")) at += /^-[wE]$/.test(words[at]) ? 2 : 1;
+      const rest = words.slice(at + 1);
+      words = /^(?:-c|--command)$/.test(rest[0] ?? "") ? ["sh", "-c", rest[1] ?? ""] : rest;
+    } else if (name !== "env" && WRAPPERS[name] !== undefined) {
+      while (at < words.length && /^-|^\d[\w.]*$/.test(words[at]))
+        at += words[at].length === 2 && WRAPPERS[name].includes(words[at][1]) ? 2 : 1;
+      words = words.slice(at);
+    } else if (PREFIXES.has(word) || /^\w+\+?=/.test(word)) words = words.slice(1);
     else break;
-    env = word === "env" || (env && word.startsWith("-"));
+    env = name === "env" || (env && word.startsWith("-"));
   }
   return words;
 };
@@ -325,9 +343,42 @@ const strip = (text: string, python: boolean): string =>
       if (comment) return python || comment[0] !== "#" ? token.replace(/['"`]/g, "") : token;
       if (code !== undefined)
         return `\n${strip(code.match(/\{[^{}]*\}/g)?.join("\n") ?? "", python)}\n`;
-      return string || (triple && !/f/i.test(prefix ?? "")) || /^[os]/.test(token) ? "" : token;
+      // A string stands as `0`, so a call still shows how many arguments it takes.
+      if (string || (triple && !/f/i.test(prefix ?? ""))) return "0";
+      return /^[os]/.test(token) ? "" : token;
     },
   );
+
+/**
+ * A `.replace(` that may rename a path: anything but a string's two or three
+ * plain positional arguments (`old, new[, count]`; `count=` named), so
+ * `Path(p).replace(q)`, `.replace(q,)`, `.replace(target=q)` and `.replace(*a, *b)` count.
+ */
+const renames = (code: string): boolean =>
+  [...code.matchAll(/\.replace\s*\(/g)].some(({ index, 0: call }) => {
+    const given = [""];
+    for (let at = index + call.length, depth = 0; at < code.length; at++) {
+      const char = code[at];
+      if (!depth && char === ")") break;
+      if (!depth && char === ",") given.push("");
+      else {
+        depth += "([{".includes(char) ? 1 : ")]}".includes(char) ? -1 : 0;
+        given[given.length - 1] += char;
+      }
+    }
+    const used = given.map((text) => text.trim());
+    if (used.length > 1 && !used.at(-1)) used.pop();
+    return !(
+      used.length >= 2 &&
+      used.length <= 3 &&
+      used.every(
+        (text, at) =>
+          text &&
+          !text.startsWith("*") &&
+          (!/^\w+\s*=(?![=>])/.test(text) || (at === 2 && /^count\s*=/.test(text))),
+      )
+    );
+  });
 
 /**
  * A call on what an expression returns (`Object.values(fs).find(…)(…)`,
@@ -350,8 +401,7 @@ const callsResult = (code: string): boolean =>
 
 /**
  * Whether inline Python or Node code may change files: SPAWNS, a call on a returned value
- * (`callsResult`), a one-argument
- * `.replace(` (a path's rename: a string's takes two), or a word left by
+ * (`callsResult`), a `.replace(` that may rename a path (`renames`), or a word left by
  * `strip` that names a call in MUTATING_CALLS (bar a list's `append` and `copy`).
  */
 const writesIn = (text: string, python = false): boolean => {
@@ -361,7 +411,8 @@ const writesIn = (text: string, python = false): boolean => {
   // or `\x` escape.
   return (
     SPAWNS.test(text) ||
-    /['"`]|\.replace\s*\((?![^()]*,)/.test(bare) ||
+    /['"`]/.test(bare) ||
+    renames(bare) ||
     /\\[ux]/.test(text) ||
     callsResult(bare) ||
     [...bare.matchAll(/[\w$]+/g)].some(
@@ -554,7 +605,10 @@ const opaqueWrites = (
     return listed(named);
   }
   const inline = (flag: RegExp): string[] | null => {
-    const at = args.findIndex((arg) => flag.test(arg));
+    // Node runs the last `-e`/`-p` and reads its options anywhere (`-e <code> -r ./f.js`); Python
+    // runs the first `-c` and passes the rest as arguments. Every one counts.
+    const codes = args.flatMap((arg, at) => (flag.test(arg) ? [at] : []));
+    const at = codes[0] ?? -1;
     // No inline flag: the script is a file, or the heredoc it reads on stdin (`python3 - <<'EOF'`).
     if (
       at < 0 &&
@@ -567,21 +621,24 @@ const opaqueWrites = (
     const texts = input.map((word, index) =>
       index === runs || (index < runs && !/^\w+\+?=/.test(word)) ? "" : scriptOf(index),
     );
+    // `--eval=<code>` holds its code; `-e <code>` is followed by it.
+    const joined = (index: number) => args[index].includes("=");
+    const code = new Set(codes.map((index) => runs + index + (joined(index) ? 1 : 2)));
+    const python = name.startsWith("py");
     // Python or Node code with no call that writes, deletes or runs a command changes nothing,
     // unless the command sets a loader (`export NODE_OPTIONS=…` before it).
     return !loads &&
       /^(?:python[\d.]*|node|bun)$/.test(name) &&
-      // The code (`--eval=<code>` holds it), the environment and the options before it.
+      // The code, the environment and the options (before Python's code; anywhere for Node).
       [
-        at < 0
-          ? fed
-          : args[at].includes("=")
-            ? texts[runs + at + 1]?.replace(/^[^=]*=/, "")
-            : texts[runs + at + 2],
-        ...texts.slice(0, runs + 1 + (at < 0 ? args.length : at)),
-      ].every(
-        (text) => text !== undefined && text !== null && !writesIn(text, name.startsWith("py")),
-      )
+        ...(at < 0 ? [fed] : []),
+        ...codes.map((index) =>
+          joined(index) ? texts[runs + index + 1]?.replace(/^[^=]*=/, "") : texts[runs + index + 2],
+        ),
+        ...texts
+          .slice(0, runs + 1 + (at < 0 || !python ? args.length : at))
+          .filter((_, index) => !code.has(index)),
+      ].every((text) => text !== undefined && text !== null && !writesIn(text, python))
       ? null
       : [
           ".",
@@ -598,7 +655,11 @@ const opaqueWrites = (
     name.startsWith("python") &&
     args.some(
       (arg, at) =>
-        /^-[^-m]*m/.test(arg) && (arg.replace(/^-[^-m]*m/, "") || args[at + 1]) !== "json.tool",
+        /^-[^-m]*m/.test(arg) &&
+        ((arg.replace(/^-[^-m]*m/, "") || args[at + 1]) !== "json.tool" ||
+          // `json.tool <in> <out>` writes <out>.
+          operands(args.slice(at + (arg.length > 2 ? 1 : 2))).filter((word) => !/^\d+$/.test(word))
+            .length > 1),
     )
   )
     return [".", ...args.flatMap(pathsIn)];
@@ -1679,7 +1740,7 @@ const segmentTargets = (
       continue;
     }
     const literal =
-      depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+      depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(pastLead(words)) : null)) : null;
     // `S='…'; bash -c "$S"`: the script a variable set in this command holds.
     const held = literal !== null && strict === "registry" ? expansions(literal, vars, loops) : [];
     const inner = held.length === 1 ? held[0] : literal;
@@ -1913,15 +1974,27 @@ const segmentTargets = (
                   ? placeholderIn(path.dirname(resolved), path.basename(resolved))
                   : resolved,
             );
-      // A shell reading its script on stdin (`bash <<'EOF'`, `sh -s`, `bash -`) runs the heredoc:
-      // it is read like the command itself, as a judge's is.
-      const shell = (runner?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
-      if (
+      // A shell or `source` reading its script on stdin (`bash <<'EOF'`, `sh -s`, `. /dev/stdin
+      // <<EOF`) runs the heredoc, and `eval` runs its words: each is read like the command itself,
+      // as a judge's is. A script from a process substitution (`bash <(…)`) is text Workit cannot see.
+      const [shell = "", ...shellArgs] = pastLead(words);
+      const verb = (shell.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+      const named =
+        (SCRIPT_SHELLS.has(verb) || verb === "source" || verb === ".") &&
+        shellScript([verb, ...shellArgs]) === null
+          ? (scriptArgs(verb, shellArgs).named ?? "")
+          : null;
+      if (depth < 4 && verb === "eval")
+        targets.push(
+          ...segmentTargets(runIn, shellArgs.join(" "), dialect, depth + 1, strict, vars),
+        );
+      else if (named !== null && /^<\(|^\/dev\/fd\/[1-9]/.test(named))
+        targets.push(placeholderIn(runIn, `${OPAQUE_TARGET}${verb}`));
+      else if (
         depth < 4 &&
         segment.stdin &&
-        SCRIPT_SHELLS.has(shell) &&
-        shellScript(words.slice(ran)) === null &&
-        /^(?:-|\/dev\/stdin)?$/.test(scriptArgs(shell, words.slice(ran + 1)).named ?? "")
+        named !== null &&
+        /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)?$/.test(named)
       )
         for (const script of segment.stdin)
           targets.push(...segmentTargets(runIn, script, dialect, depth + 1, strict, vars));
