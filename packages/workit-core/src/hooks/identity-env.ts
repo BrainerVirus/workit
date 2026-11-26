@@ -18,7 +18,7 @@
 // Words, not text, so a `grep WORKIT_HOST` or a quoted mention passes.
 // A prefix or `env` assignment changes only its own command, so it counts only
 // when that command may run `workit` (`OPENCODE_SESSION_ID=x opencode run hi;
-// workit status` runs); `export`, `unset` or a bare `NAME=x;` of an identity
+// workit check lint` runs); `export`, `unset` or a bare `NAME=x;` of an identity
 // variable counts anywhere. The variables Workit finds its state and config
 // dirs by (#980) count only where the change reaches a `workit` run: a prefix
 // assignment for its own command, an `export`/`unset`/bare assignment for the
