@@ -382,7 +382,8 @@ export type SessionClaimRefusal = { error: string; unblock: string };
  *   - `<this session>:<agent id>` only when this lead's SubagentStart hook
  *     issued it (Claude Code, Codex).
  * An issued id the hook bound to a token is accepted only with that token
- * (`options.token`): a lead or sibling that read the id cannot reuse it.
+ * (`options.token`), whatever host the shell names or none: a lead or
+ * sibling that read the id cannot reuse it, even with its host variables cleared.
  * `options.flag`: named by `--session`. On a host that is only for an issued
  * id; a shell's own or derived session comes from its environment, so a
  * `--session` the gate would not accept is refused here, not later.
@@ -418,6 +419,11 @@ export function sessionClaimRefusal(
       error: `forged_session: WORKIT_HOST names ${real.host}, but its own ${HOST_SET_VARIABLE[host]} is not in this shell, so ${claimed} cannot be checked`,
       unblock: `record the verdict from the ${real.host} session's own shell, where ${HOST_SET_VARIABLE[host]} is set`,
     };
+  // The registry decides, not the environment (#975): an id a SubagentStart
+  // hook bound to a token needs that token whatever host this shell names,
+  // none and `cli` included, so clearing the host variables proves nothing.
+  if (issuedBinding(cwd, claimed) === "token" && !issuedTokenMatches(cwd, claimed, options.token))
+    return unboundRefusal(claimed);
   if (real.kind === "none" || !real.session) return null;
   const ownShell = isOwnShellClaim(real, claimed);
   if (ownShell) {
@@ -431,17 +437,8 @@ export function sessionClaimRefusal(
     };
   }
   const issuedClaim = claimed === real.session || claimed.startsWith(`${real.session}:`);
-  if (issuedClaim) {
-    const binding = issuedBinding(cwd, claimed);
-    if (binding === "legacy") return null;
-    if (binding === "token")
-      return issuedTokenMatches(cwd, claimed, options.token)
-        ? null
-        : {
-            error: `unbound_session: ${claimed} was issued to a subagent, and this call did not present the token its SubagentStart hook gave it`,
-            unblock: `only that subagent acts as ${claimed}: it passes --token exactly as its SubagentStart context names it (or WORKIT_SESSION_TOKEN); anyone else spawns their own verifier`,
-          };
-  }
+  // Issued to a child of this session: a token-bound id presented its token above.
+  if (issuedClaim && issuedBinding(cwd, claimed) !== null) return null;
   const error = `forged_session: ${claimed} is neither this shell's session (${real.session}) nor an id its host issued to a child of it`;
   // A well-formed subagent id, but no hook here ever recorded one: the hook
   // most likely predates this CLI (CLI and plugin update separately).
@@ -458,6 +455,12 @@ export function sessionClaimRefusal(
       : "never name a session yourself: spawn a verifier or reviewer subagent and pass exactly the --session and --token its SubagentStart context names, or pass --as verifier",
   };
 }
+
+/** An id a hook bound to a token, claimed without that token. */
+const unboundRefusal = (claimed: string): SessionClaimRefusal => ({
+  error: `unbound_session: ${claimed} was issued to a subagent, and this call did not present the token its SubagentStart hook gave it`,
+  unblock: `only that subagent acts as ${claimed}: it passes --token exactly as its SubagentStart context names it (or WORKIT_SESSION_TOKEN); anyone else spawns their own verifier`,
+});
 
 /** Hosts that always put their own session variable in the agent's shell. */
 const HOST_SET_VARIABLE: Readonly<Record<string, string>> = {

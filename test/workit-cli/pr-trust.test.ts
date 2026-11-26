@@ -478,3 +478,123 @@ test("Given a hand-minted <lead>:<x> id in a Claude Code shell, When workit git 
   expect(commit.json().unblock).toContain("commit");
   expect(commit.json().unblock).not.toContain("verdict");
 });
+
+// #975: with every host variable cleared (no WORKIT_HOST, WORKIT_HOST=cli, or a
+// host named without its session), the issued registry still decides: an id a
+// SubagentStart hook bound to a token needs that token, whatever host is detected.
+const NO_HOST = { WORKIT_SESSION_ID: "" };
+for (const [label, argv, env] of [
+  ["--session with no host variable at all", ["--session", "lead-H:rev-9"], NO_HOST],
+  [
+    "--session under WORKIT_HOST=cli",
+    ["--session", "lead-H:rev-9"],
+    { WORKIT_HOST: "cli", WORKIT_SESSION_ID: "" },
+  ],
+  [
+    "--session under WORKIT_HOST=claude_code with its WORKIT_SESSION_ID cleared",
+    ["--session", "lead-H:rev-9"],
+    { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "" },
+  ],
+  ["the issued id as WORKIT_SESSION_ID with no host", [], { WORKIT_SESSION_ID: "lead-H:rev-9" }],
+  [
+    "--session with a wrong token and no host",
+    ["--session", "lead-H:rev-9", "--token", "guessed"],
+    NO_HOST,
+  ],
+] as const)
+  test(`Given an issued id and ${label}, When a verdict is recorded without its token, Then it is refused (unbound_session) and nothing merges (#975)`, async () => {
+    const { repo, runner } = setup();
+    recordIssuedSession(repo.cwd, "lead-H", "lead-H:rev-9");
+    const recorded = await run(
+      ["ledger", "verdict", "verified", "--how", "forged", ...argv, "--json"],
+      repo.cwd,
+      { ...env },
+    );
+    expect(recorded.code, recorded.stdout).toBe(3);
+    expect(recorded.json().error).toContain("unbound_session");
+    expect(rows(repo.cwd, "verdict")).toEqual([]);
+    const merge = await run(["pr", "merge", "--json"], repo.cwd, NO_HOST);
+    expect(merge.code).toBe(3);
+    expect(writes(runner.calls)).toEqual([]);
+  });
+
+test("Given an issued id, When the global --session names it with no host and no token, Then it is refused before the verb runs (#975)", async () => {
+  const { repo } = setup();
+  recordIssuedSession(repo.cwd, "lead-H", "lead-H:rev-8");
+  const recorded = await run(
+    ["--session", "lead-H:rev-8", "ledger", "verdict", "verified", "--how", "forged", "--json"],
+    repo.cwd,
+    NO_HOST,
+  );
+  expect(recorded.code, recorded.stdout).toBe(3);
+  expect(recorded.json().error).toContain("unbound_session");
+  expect(rows(repo.cwd, "verdict")).toEqual([]);
+});
+
+for (const [label, source] of [
+  ["a --session row", "flag"],
+  ["an environment row", "env"],
+] as const)
+  test(`Given ${label} a CLI with no host recorded for an issued id without its token, When pr merge runs, Then the gate refuses it (unbound_session) (#975)`, async () => {
+    const { repo, runner } = setup();
+    recordIssuedSession(repo.cwd, "lead-H", "lead-H:rev-7");
+    const recorded = recordVerdict(
+      {
+        cwd: repo.cwd,
+        actor: { host: "cli", session: "lead-H:rev-7", agentId: null },
+        sessionSource: source,
+        branch: "feature/x",
+      },
+      { result: "verified", how: "host variables cleared" },
+    );
+    expect(recorded.ok).toBe(true);
+    const merge = await run(["pr", "merge", "--json"], repo.cwd, NO_HOST);
+    expect(merge.code).toBe(3);
+    expect(merge.json().error).toContain("unbound_session");
+    expect(writes(runner.calls)).toEqual([]);
+  });
+
+for (const [label, id, flags, env] of [
+  ["--session and --token with no host variable", "lead-H:rev-6", true, NO_HOST],
+  [
+    "the issued id and WORKIT_SESSION_TOKEN in the environment with no host",
+    "lead-H:rev-4",
+    false,
+    { WORKIT_SESSION_ID: "lead-H:rev-4" },
+  ],
+] as const)
+  test(`Given an issued id and ${label}, When its own token is presented, Then the verdict records bound and merges (#975)`, async () => {
+    const { repo } = setup();
+    // Each id is issued once per state dir: a fresh one per case.
+    const token = recordIssuedSession(repo.cwd, "lead-H", id) ?? "";
+    expect(token).not.toBe("");
+    const recorded = await run(
+      [
+        "ledger",
+        "verdict",
+        "verified",
+        "--how",
+        "drove it",
+        ...(flags ? ["--session", id, "--token", token] : []),
+      ],
+      repo.cwd,
+      { ...env, ...(flags ? {} : { WORKIT_SESSION_TOKEN: token }) },
+    );
+    expect(recorded.code, recorded.stdout).toBe(0);
+    expect(recorded.stdout).toContain("gate: feature/x accepted");
+    expect(rows(repo.cwd, "verdict")[0]).toMatchObject({ sessionBound: true });
+    const merged = await run(["pr", "merge", "--json"], repo.cwd, NO_HOST);
+    expect(merged.code, merged.stdout).toBe(0);
+  });
+
+test("Given an issued id and no host, When the author records --self, Then it records as self (#975)", async () => {
+  const { repo } = setup();
+  recordIssuedSession(repo.cwd, "lead-H", "lead-H:rev-5");
+  const own = await run(
+    ["ledger", "verdict", "verified", "--how", "mine", "--self", "--json"],
+    repo.cwd,
+    { WORKIT_SESSION_ID: "lead-H:rev-5" },
+  );
+  expect(own.code, own.stdout).toBe(0);
+  expect(own.json().data.gate).toMatchObject({ accepted: false, reasons: ["self"] });
+});

@@ -235,6 +235,47 @@ test("a host that always sets its own variable, named by WORKIT_HOST without it,
   expect(sessionClaimRefusal({ WORKIT_HOST: "cli", WORKIT_SESSION_ID: "c" }, "anyone")).toBeNull();
 });
 
+test("Given a token-bound issued id, When it is claimed with the host variables cleared, Then the registry still asks for its token, and unissued or legacy ids stay declarations (#975)", () => {
+  const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
+  const state = freshState(cwd);
+  try {
+    const token = recordIssuedSession(cwd, "lead", "lead:rev-1");
+    const cleared: NodeJS.ProcessEnv[] = [
+      {},
+      { WORKIT_SESSION_ID: "" },
+      { WORKIT_HOST: "cli" },
+      { WORKIT_HOST: "cli", WORKIT_SESSION_ID: "lead:rev-1" },
+      { WORKIT_SESSION_ID: "lead:rev-1" },
+      // A host named without its session id (WORKIT_SESSION_ID unset).
+      { WORKIT_HOST: "claude_code" },
+      { WORKIT_HOST: "cursor", WORKIT_SESSION_ID: "" },
+    ];
+    for (const env of cleared) {
+      for (const given of [null, "guessed"])
+        for (const flag of [true, false])
+          expect(
+            sessionClaimRefusal(env, "lead:rev-1", cwd, { token: given, flag })?.error,
+            `${JSON.stringify(env)} ${given} ${flag}`,
+          ).toContain("unbound_session");
+      expect(
+        sessionClaimRefusal(env, "lead:rev-1", cwd, { token, flag: true }),
+        JSON.stringify(env),
+      ).toBeNull();
+    }
+    // Never issued: CI, a plain terminal and Cursor's declared verifier ids stay declarations.
+    for (const claimed of ["ci-verifier", "lead:verifier-ab12", "other-lead:rev-1"])
+      expect(sessionClaimRefusal({}, claimed, cwd), claimed).toBeNull();
+    // A legacy record (a hook older than tokens) has no token to present.
+    const old = path.join(state, "issued", digest("old-lead"));
+    mkdirSync(old, { recursive: true });
+    writeFileSync(path.join(old, digest("old-lead:v")), "workit-issued-sessions/2");
+    expect(sessionClaimRefusal({}, "old-lead:v", cwd)).toBeNull();
+  } finally {
+    restoreState();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("Given a well-formed subagent id and no issued-id record on the machine, Then the refusal names the stale plugin hook and its update", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
   freshState(cwd);
