@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- on Codex, a subagent's and a lead's workit check runs are each bound to their own thread (CODEX_THREAD_ID), so a verdict is held to and cleared by only its own thread's runs, and the Codex hooks now deny a command that changes an identity or state variable around a workit call (#994).
+
 ## [2.27.9] - 2026-11-26
 
 ### Fixed
