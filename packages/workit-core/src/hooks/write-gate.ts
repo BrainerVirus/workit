@@ -45,6 +45,7 @@ import {
   workitInvocations,
   type RawInvocation,
 } from "./raw-git";
+import { expandGlob, globPattern } from "./path-glob";
 import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
 import {
   CMD_VAR,
@@ -293,6 +294,50 @@ const editsOf = (input: string[]): string[] | null => {
     default:
       return [];
   }
+};
+
+/** A `find` that deletes: its roots as written and its name, path and regex tests (#984). */
+type FindRemoval = { roots: string[]; tests: Array<[kind: string, pattern: string]> };
+
+/**
+ * The paths one simple command removes or moves away (#984): `rm`, `rmdir`, `unlink`, `mv`'s
+ * sources, `rsync --delete`'s destination and PowerShell's Remove-Item and Move-Item (and
+ * aliases); a `find` that deletes (`-delete`, or `-exec`/`-execdir` running a removal) as `find`.
+ */
+const removalsOf = (input: string[]): { files: string[]; find?: FindRemoval } => {
+  const [verb = "", ...args] = pastLead(input);
+  const name = (verb.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  const files = operands(args);
+  if (/^(?:rm|rmdir|rd|unlink|shred|remove-item|ri|del|erase)$/.test(name)) return { files };
+  if (/^(?:mv|move-item|mi|move)$/.test(name)) {
+    const into = valueOf(args, /^(?:-[a-zA-Z]*t|--target-directory=?)(.*)$/s);
+    return {
+      files: into === undefined ? files.slice(0, -1) : files.filter((file) => file !== into),
+    };
+  }
+  if (name === "rsync" && args.some((arg) => /^--del(?:ete|$)/.test(arg)))
+    return { files: files.slice(-1) };
+  const removes = args.some(
+    (arg, at) =>
+      arg === "-delete" ||
+      (/^-(?:exec|execdir|ok|okdir)$/.test(arg) &&
+        /^(?:rm|rmdir|unlink|shred|mv|truncate|cp|dd|tee|sh|bash|dash|zsh)$/.test(
+          commandName(args[at + 1] ?? ""),
+        )),
+  );
+  if (name !== "find" || !removes) return { files: [] };
+  const end = args.findIndex((arg) => /^[-(!]/.test(arg));
+  const roots = end === 0 ? ["."] : args.slice(0, end);
+  const tests: Array<[string, string]> = [];
+  for (const [at, arg] of args.entries()) {
+    const kind = /^-(i?)(?:name|path|wholename|regex)$/.exec(arg);
+    const value = args[at + 1];
+    if (kind && value !== undefined)
+      tests.push([`${arg.replace(/^-i?/, "").replace("wholename", "path")}${kind[1]}`, value]);
+  }
+  // A negated test is not read: the find is judged as if it had none.
+  const negated = args.some((arg) => arg === "!" || arg === "-not");
+  return { files: roots, find: { roots, tests: negated ? [] : tests } };
 };
 
 /**
@@ -1493,6 +1538,8 @@ export const OPAQUE_TARGET = ".workit-runs-";
 const UNRESOLVED_TARGET = ".workit-unresolved-target";
 /** Stands under a path a command links or mounts (`<source>/.workit-link-source`): the registry guard asks whether it is or holds a guarded path. */
 const LINK_SOURCE = ".workit-link-source";
+/** Stands under a path a command removes or moves away (#984): the ledger guard asks whether it is or holds a ledger. */
+const REMOVED_SOURCE = ".workit-removed-source";
 
 /** A one-command override: `WORKIT_LIVE_SESSION=override <command>`. */
 const OVERRIDE = "WORKIT_LIVE_SESSION=override";
@@ -2018,8 +2065,15 @@ const segmentTargets = (
     if (loop >= 0) {
       const [name = "", keyword, ...items] = segment.words.slice(loop + 1);
       const expanding = new Set(segment.expands ?? []);
-      const list = items.flatMap((item, index) =>
-        expanding.has(loop + 3 + index) ? listWords(item) : [listWord(homeExpanded(item))],
+      // The registry guard expands a glob item the way the shell will (`for d in .git/w*`).
+      const globbedItem = (item: string): string[] | null =>
+        strict === "registry" && dir !== undefined && /[*?[]/.test(item)
+          ? expandGlob(path.resolve(dir, homeExpanded(item)))
+          : null;
+      const list = items.flatMap(
+        (item, index) =>
+          globbedItem(item) ??
+          (expanding.has(loop + 3 + index) ? listWords(item) : [listWord(homeExpanded(item))]),
       );
       vars.delete(name);
       if (
@@ -2368,6 +2422,19 @@ const segmentTargets = (
     if (edits === null) {
       if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
     }
+    if (strict === "registry") {
+      const { files: gone, find } = removalsOf(body);
+      for (const root of gone)
+        for (const file of atAll(root))
+          targets.push(
+            path.join(
+              file,
+              find
+                ? `${REMOVED_SOURCE}~${encodeURIComponent(JSON.stringify({ root, tests: find.tests }))}`
+                : REMOVED_SOURCE,
+            ),
+          );
+    }
     for (const file of [...segment.redirects, ...(edits ?? [])])
       // PowerShell's `$null` and cmd's `nul` discard what is written to them.
       if (
@@ -2430,9 +2497,13 @@ export const shellMutationTargets = (
     // The registry guard reads a name the command does not set from the hook's own environment.
     const env = new Map(
       strict === "registry"
-        ? [...command.matchAll(/\$\{?([A-Za-z_]\w*)/g)]
-            .filter((match) => !/^(?:OLD)?PWD$/.test(match[1]))
-            .map((match) => [match[1], process.env[match[1]] ?? ""])
+        ? [
+            ...[...command.matchAll(/\$\{?([A-Za-z_]\w*)/g)]
+              .filter((match) => !/^(?:OLD)?PWD$/.test(match[1]))
+              .map((match): [string, string] => [match[1], process.env[match[1]] ?? ""]),
+            // `$PWD` is the dir the command starts in, not the hook's own.
+            ["PWD", cwd] as [string, string],
+          ]
         : [],
     );
     return recording(() => [
@@ -2542,7 +2613,7 @@ type Registry = "issued" | "approvals" | "grants" | "ledger";
  * A guarded registry; "link", a symlink chain too long to follow, which may
  * reach one; or "holds", a link or mount source that holds one.
  */
-type Denied = Registry | "link" | "holds";
+type Denied = Registry | "link" | "holds" | "removes";
 
 /** The config files only the user writes: grants and the seal that vouches for them (#819). */
 const CONFIG_FILES = ["workspaces.json", SEAL_FILE];
@@ -2696,6 +2767,104 @@ const holdsGuarded = (cwd: string, source: string, state: string, configs: strin
   );
 };
 
+/**
+ * Whether removing or moving `source` takes a ledger with it (#984): it is a `.git` dir or a
+ * `.git/workit`, holds the ledger dir of the repository `cwd` is in (made yet or not), or holds
+ * a guarded path (holdsGuarded).
+ */
+const removesLedger = (cwd: string, source: string, state: string, configs: string[]): boolean => {
+  const real = canonical(source);
+  if (/(?:^|[\\/])\.git(?:[\\/]workit)?$/i.test(real) || inRepoLedger(real)) return true;
+  const own = ledgerPath(cwd);
+  if (own.ok) {
+    const rel = path.relative(real, canonical(path.dirname(own.value)));
+    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return true;
+  }
+  return holdsGuarded(cwd, source, state, configs);
+};
+
+/** The root as written and the tests a find-removal marker carries. */
+const findTests = (marker: string): { root: string; tests: Array<[string, string]> } | null => {
+  try {
+    return JSON.parse(decodeURIComponent(marker.slice(REMOVED_SOURCE.length + 1)));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Whether a `find` that deletes from `root` (resolved) reaches a ledger: the ledger dir of the
+ * repository `cwd` is in, or one under `root` (`.git/workit/ledger`), when `root` is in or above
+ * it and some entry from `root` down to the ledger's files matches one of its tests (any of them:
+ * `-o` and `!` are not read), or it has none. An unreadable marker counts as reaching.
+ */
+const findReachesLedger = (
+  cwd: string,
+  root: string,
+  find: { root: string; tests: Array<[string, string]> } | null,
+): boolean => {
+  if (find === null) return true;
+  const real = canonical(root);
+  const own = ledgerPath(cwd);
+  const ledgers = [
+    ...(own.ok ? [canonical(path.dirname(own.value))] : []),
+    ...[".git/workit/ledger", "workit/ledger", "ledger"]
+      .map((rel) => path.join(real, rel))
+      .filter((dir) => existsSync(dir) && inRepoLedger(dir)),
+  ];
+  const under = (parent: string, child: string) => {
+    const rel = path.relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  // `-iname`, `-ipath`, `-iregex` (a kind ending in `i`) match without case.
+  const patterns = find.tests.map(([kind, pattern]) => {
+    const fold = kind.endsWith("i");
+    const glob = globPattern(pattern, true);
+    let test = /(?:)/;
+    try {
+      test = kind.startsWith("regex")
+        ? new RegExp(`^${pattern}$`, fold ? "i" : "")
+        : glob
+          ? new RegExp(glob.source, fold ? "iu" : "u")
+          : test;
+    } catch {
+      // A test Workit cannot read matches every entry.
+    }
+    return { kind, test };
+  });
+  const matches = (entry: string) =>
+    patterns.length === 0 ||
+    patterns.some(({ kind, test }) =>
+      test.test(
+        kind.startsWith("name")
+          ? path.basename(entry)
+          : path.join(find.root, path.relative(real, entry)).replaceAll("\\", "/"),
+      ),
+    );
+  for (const ledger of ledgers) {
+    if (!existsSync(ledger) || (!under(real, ledger) && !under(ledger, real))) continue;
+    // The dirs from the root down to the ledger, then the ledger's own entries (bounded).
+    const entries: string[] = [];
+    for (let dir = ledger; under(real, dir) && dir !== real; dir = path.dirname(dir))
+      entries.push(dir);
+    const walk = (dir: string) => {
+      for (const item of readdirSync(dir, { withFileTypes: true })) {
+        if (entries.length > 500) return;
+        const file = path.join(dir, item.name);
+        entries.push(file);
+        if (item.isDirectory()) walk(file);
+      }
+    };
+    try {
+      walk(ledger);
+    } catch {
+      return true;
+    }
+    if (entries.some((entry) => under(real, entry) && matches(entry))) return true;
+  }
+  return false;
+};
+
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
 const registryTarget = (
   cwd: string,
@@ -2706,6 +2875,19 @@ const registryTarget = (
   const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
+    if (path.basename(file).startsWith(REMOVED_SOURCE)) {
+      const marker = path.basename(file);
+      const source = path.dirname(path.resolve(cwd, file));
+      const find = marker === REMOVED_SOURCE ? null : findTests(marker);
+      // A glob is expanded as the shell would before the command runs (`.git/w*`, `.[!.]*`).
+      if (
+        expandGlob(source).some((gone) =>
+          find ? findReachesLedger(cwd, gone, find) : removesLedger(cwd, gone, state, configs),
+        )
+      )
+        return { file: path.join(source, REMOVED_SOURCE), registry: "removes" };
+      continue;
+    }
     if (path.basename(file) === LINK_SOURCE) {
       const source = path.dirname(path.resolve(cwd, file));
       const reached =
@@ -2889,6 +3071,12 @@ const REGISTRY_DENY: Record<Denied, { label: string; what: string; unblock: stri
     what: "a symlink chain Workit could not resolve (over 40 links), which may reach a guarded path",
     unblock: "Write to the file's real path.",
   },
+  removes: {
+    label: "ledger guard",
+    what: "a Workit ledger, the git dir that holds one or Workit's state",
+    unblock:
+      "Never remove or move `.git`, `.git/workit` or a dir that holds a Workit ledger: the ledger keeps the session's verdicts and pins. Remove the files you made by name.",
+  },
   holds: {
     label: "registry guard",
     what: "Workit's state, its config or a repository ledger",
@@ -2926,6 +3114,12 @@ const registryDeny = ({ file, registry }: { file: string; registry: Denied }): H
       kind: "deny",
       reason: `workit ${label}: this command links or mounts ${path.dirname(file)}, which is or holds ${what}. ${LINK_UNBLOCK}`,
       unblock: LINK_UNBLOCK,
+    };
+  if (path.basename(file) === REMOVED_SOURCE)
+    return {
+      kind: "deny",
+      reason: `workit ${label}: this command removes or moves ${path.dirname(file)}, which is or holds ${what}. ${unblock}`,
+      unblock,
     };
   if (path.basename(file) === UNRESOLVED_TARGET)
     return {

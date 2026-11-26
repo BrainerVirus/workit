@@ -9,8 +9,9 @@
 //     writes with a task store (a writer verb or a file redirect, for the
 //     before-write gate), may reach a guarded path (core hooks/write-reach.ts,
 //     for the registry guard), may run ytrack or a user-only Workit call, or
-//     may be heavy (the heavy-command gate's cheap pre-check) can be denied or
-//     nudged;
+//     may be heavy (the heavy-command gate's cheap pre-check) or may run a
+//     Workit hook entry or remove a ledger's dir (core hooks/hook-entry-hint.ts)
+//     can be denied or nudged;
 //   - unless a standing-order revision this agent has not seen is pending,
 //     or the agent is a workit implementer, verifier or reviewer (confinement).
 // The global `process`: under bun, `import process from "node:process"` reads
@@ -80,6 +81,7 @@ const { recordHookRun } = await import("@workit-dev/core/src/hooks/hook-runs");
 // The worker tool-call budget: every PreToolUse counts, quiet or not.
 const { observeHookBudget } = await import("@workit-dev/core/src/hooks/budget-signal");
 const { hasTaskStore, mayReach } = await import("@workit-dev/core/src/hooks/write-reach");
+const { mayHitHookGuard } = await import("@workit-dev/core/src/hooks/hook-entry-hint");
 /** `ytrack` where a command name can end, in any position: a copy of core hooks/ytrack-word.ts. */
 const YTRACK_WORD = /ytrack(?![\w/-]|\.(?!exe|cmd))/i;
 const namesYtrack = (text: string): boolean => {
@@ -181,6 +183,8 @@ const quietEvent = (): string | null => {
       text,
     ) ||
       guarded(text) ||
+      // Text that may run Workit's own hook entry or remove a ledger's dir (#984).
+      mayHitHookGuard(text) ||
       // Text that may run ytrack (hooks/ytrack-word.ts: the gate's own first test).
       namesYtrack(text) ||
       mayRunUserOnly(text) ||

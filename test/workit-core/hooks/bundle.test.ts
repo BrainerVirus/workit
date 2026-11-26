@@ -183,7 +183,19 @@ const HOOK_ENTRIES = [
 // beside a workit call, and the claim check refuses a foreign host's variable in a Claude Code shell:
 // core run 573,983 B -> 574,246 B (+263 B; Claude Code 567,603 B, Codex 555,924 B, Cursor 555,318 B).
 // The ceiling is core run plus 2 KiB.
-const BUDGET = 576_294;
+// hook-entry-guard (#984, 2026-11-26, Bun 1.4.5, rebased on aa97cd74): the hook-entry guard
+// (hooks/hook-entry.ts: entries by basename and by resolved path in a Workit package, wrappers,
+// runners, stdin, nested scripts, cd, variables, globs and links), its launcher pre-check and the
+// ledger guard's removal check take core run from 574,246 B to 581,358 B (+7,112 B; Claude Code
+// 574,715 B, Codex 563,036 B, Cursor 562,430 B). Its second round (verdict mwxpl6dz: every
+// simple command of a compound, unfollowed wrappers named beside an interpreter, NODE_OPTIONS and
+// BUN_OPTIONS, fds and piped stdin, literal substitutions, removal globs, find tests and rsync
+// --delete; hooks/path-glob.ts) takes core run to 585,776 B (+4,418 B; Claude Code 579,133 B,
+// Codex 567,453 B, Cursor 566,847 B). Round 3 (verdict mwxrd3nu, rebased on #987 at c2ae788a:
+// built command words, loop variables, raw `$(…)`, at/batch, find -i and negated tests, rsync --del)
+// takes it to 587,104 B (+1,328 B; Claude Code 580,461 B, Codex 568,781 B, Cursor 568,175 B). The
+// ceiling is core run plus 2 KiB.
+const BUDGET = 589_152;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

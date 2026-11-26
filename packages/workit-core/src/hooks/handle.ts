@@ -54,6 +54,7 @@ import { liveTargets, shellGate, writeGate } from "./write-gate";
 import { ytrackGate } from "./ytrack-guard";
 import { exitPipeGate } from "./exit-pipe";
 import { dropAgentStamps, noteAgentStamps } from "../agent-stamp";
+import { hookEntryDeny, hookEntryRun } from "./hook-entry";
 import { identityEnvChange, identityEnvDeny } from "./identity-env";
 import {
   confineImplementer,
@@ -364,6 +365,9 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       // After confinement: an implementer outside its worktree first hears where to work.
       const raw = canDeny ? rawGitPre(input, event.command, { nudge: false }) : NONE;
       if (raw.kind === "deny") return raw;
+      // Only the host runs Workit's hooks (#984): a shell run feeds one a forged payload.
+      const entry = canDeny ? hookEntryRun(input.cwd, event.command, event.dialect) : null;
+      if (entry) return { kind: "deny", reason: hookEntryDeny(entry), unblock: null };
       // The before-write gate and the live-session guard (#274); a judge, held
       // to its scratch dir above, neither meets nor claims a live checkout.
       const owner = role === "judge" ? null : liveOwner(input, descriptor.transport);
