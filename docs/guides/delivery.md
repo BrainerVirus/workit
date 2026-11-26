@@ -879,7 +879,11 @@ Some team repos must not mention Workit. Mark the workspace with
 `workit workspace set <ws> shared=true` and `pr create` and `pr edit` print one
 `warning:` line on stderr for each place the PR names Workit (a whole word, any
 case): the title, the body with its line numbers, and each new `.md` or `.mdx`
-file the branch adds since its base. Each line asks you to reword. The PR still
+file the branch adds since its base. A whole word means no letter, digit or
+underscore, in any script, touches it: `Workité` and `workit_cli` pass. A URL, a
+hyphenated name such as `my-workit-fork` or a code span holding `workit` is
+flagged on purpose, since the team reads each one. `pr edit` scans the title
+only when you pass `--title`. Each line asks you to reword. The PR still
 opens or updates: it is a warning, never a block. What Workit writes itself does
 not count: the `Workit-Session:` trailer and `<!-- workit… -->` markers. With
 `--json`, `data.sharedWarnings` lists each line that names it as
