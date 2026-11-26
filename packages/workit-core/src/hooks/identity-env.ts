@@ -16,16 +16,25 @@
 // What it misses binds no agent: on Claude Code and Codex a verdict counts
 // only check rows a claimed stamp named (#972, ledger.ts sessionOwnsRun).
 // Words, not text, so a `grep WORKIT_HOST` or a quoted mention passes.
+// The hosts' own variables (OPENCODE_SESSION_ID, PI_SESSION_ID, CODEX_THREAD_ID,
+// CLAUDECODE, CLAUDE_CODE_ENTRYPOINT) name the host the CLI reads (#981): a
+// change to one counts only in a command that runs `workit`.
 import { shellScript } from "./delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./shell-words";
 import { pastOptions, WRAPPERS } from "./write-gate";
 
 const NAMES = "WORKIT_(?:AGENT_ID|HOST|SESSION_ID|SESSION_TOKEN)";
+const HOST_NAMES =
+  "(?:OPENCODE_SESSION_ID|PI_SESSION_ID|CODEX_THREAD_ID|CLAUDECODE|CLAUDE_CODE_ENTRYPOINT)";
 const IDENTITY = new RegExp(`^${NAMES}$`, "u");
-const POWERSHELL = new RegExp(
-  `\\$env:${NAMES}\\b|env:[\\\\/]?${NAMES}\\b|EnvironmentVariable\\(\\s*['"]${NAMES}\\b`,
-  "iu",
-);
+const HOST_VARIABLE = new RegExp(`^${HOST_NAMES}$`, "u");
+const powershell = (names: string): RegExp =>
+  new RegExp(
+    `\\$env:${names}\\b|env:[\\\\/]?${names}\\b|EnvironmentVariable\\(\\s*['"]${names}\\b`,
+    "iu",
+  );
+const POWERSHELL = powershell(NAMES);
+const POWERSHELL_HOST = powershell(HOST_NAMES);
 /** Builtins that export, unset or declare the names after them. */
 const DECLARES = new Set(["export", "unset", "declare", "typeset", "local", "readonly"]);
 /** Wrappers Workit does not follow into: any env change inside one is unreadable to it. */
@@ -50,13 +59,17 @@ const ENV_LONG_FLAGS =
 /** A command's name: its last path part, without a Windows `.exe` (`C:\\Git\\usr\\bin\\env.exe`). */
 const base = (word: string | undefined): string =>
   (word?.split(/[\\/]/u).at(-1) ?? "").replace(/\.exe$/iu, "");
-const named = (word: string | undefined): boolean => IDENTITY.test(word?.split("=")[0] ?? "");
+const nameOf = (word: string | undefined): string => word?.split("=")[0] ?? "";
+const named = (word: string | undefined): boolean =>
+  IDENTITY.test(nameOf(word)) || HOST_VARIABLE.test(nameOf(word));
 const isWorkit = (word: string | undefined): boolean => /^workit(?:-cli)?$/u.test(base(word));
 
 /** What a command (and every script it nests) does to the identity variables. */
 type Scan = {
   /** An identity name it sets, unsets or empties. */
   hit: string | null;
+  /** A host's own session variable it sets, unsets or empties: matters only to a `workit` run. */
+  hostHit: string | null;
   /** What it does that only a `workit` run makes matter: a cleared env or an argument Workit cannot read. */
   risky: string | null;
   /** Whether a segment runs `workit` (a command word, past assignments, wrappers and env's options). */
@@ -64,6 +77,13 @@ type Scan = {
 };
 
 const UNREADABLE = "env/unset arguments Workit cannot read";
+
+/** Notes `word` (`NAME` or `NAME=value`) when it names an identity or host variable. */
+const mark = (scan: Scan, word: string | undefined): void => {
+  const name = nameOf(word);
+  if (IDENTITY.test(name)) scan.hit ??= name;
+  else if (HOST_VARIABLE.test(name)) scan.hostHit ??= name;
+};
 
 /** `env`'s arguments from `at`: its options by arity, assignments, then the command it runs. */
 const scanEnv = (
@@ -75,7 +95,7 @@ const scanEnv = (
 ): void => {
   const risky = (what: string) => void (scan.risky ??= what);
   const unset = (name: string | undefined) => {
-    if (named(name)) scan.hit ??= name ?? null;
+    mark(scan, name);
   };
   /** `-S line`: the line is more of env's arguments (a `$` or backtick in it is never read). */
   const split = (line: string | undefined, rest: number, built: boolean) => {
@@ -164,7 +184,7 @@ const commandAt = (
   let index = from;
   while (index < words.length) {
     while (/^[A-Za-z_]\w*=/u.test(words[index] ?? "")) {
-      if (named(words[index])) scan.hit ??= words[index]?.split("=")[0] ?? null;
+      mark(scan, words[index]);
       index += 1;
     }
     const name = base(words[index]).toLowerCase();
@@ -199,8 +219,7 @@ const opaque = (rest: readonly string[], scan: Scan, assigns: boolean): void => 
     (assigns && /^[A-Za-z_]\w*=/u.test(word));
   if (rest.some(changes)) scan.risky ??= UNREADABLE;
   const hit = rest.find(named);
-  if (hit && rest.some((word) => base(word).toLowerCase() === "env"))
-    scan.hit ??= hit.split("=")[0] ?? null;
+  if (hit && rest.some((word) => base(word).toLowerCase() === "env")) mark(scan, hit);
 };
 
 /** Short options of `su`, `runuser` and util-linux `script` that take a value, `c` among them. */
@@ -241,14 +260,14 @@ const scanCommand = (command: string, dialect: ShellDialect, depth: number, scan
     const expanded = new Set(expands);
     let at = 0;
     while (/^[A-Za-z_]\w*=/u.test(words[at] ?? "")) {
-      if (named(words[at])) scan.hit ??= words[at]?.split("=")[0] ?? null;
+      mark(scan, words[at]);
       at += 1;
     }
     let declare = at;
     if (["builtin", "command"].includes(words[declare] ?? "")) declare += 1;
     if (DECLARES.has(words[declare] ?? "")) {
       for (let index = declare + 1; index < words.length; index += 1) {
-        if (named(words[index])) scan.hit ??= words[index]?.split("=")[0] ?? null;
+        mark(scan, words[index]);
         if (expanded.has(index)) scan.risky ??= UNREADABLE;
       }
       continue;
@@ -264,14 +283,22 @@ export const identityEnvChange = (
   command: string,
   dialect: ShellDialect = "posix",
 ): string | null => {
-  if (!/WORKIT_|\b(?:env|unset|export|declare|typeset|local|readonly)\b/u.test(command))
+  if (
+    !/WORKIT_|OPENCODE_SESSION_ID|PI_SESSION_ID|CODEX_THREAD_ID|CLAUDE|\b(?:env|unset|export|declare|typeset|local|readonly)\b/u.test(
+      command,
+    )
+  )
     return null;
-  if (dialect === "powershell") return POWERSHELL.exec(command)?.[0] ?? null;
-  const scan: Scan = { hit: null, risky: null, runs: false };
+  if (dialect === "powershell")
+    return (
+      POWERSHELL.exec(command)?.[0] ??
+      (/\bworkit\b/iu.test(command) ? (POWERSHELL_HOST.exec(command)?.[0] ?? null) : null)
+    );
+  const scan: Scan = { hit: null, hostHit: null, risky: null, runs: false };
   scanCommand(command, dialect, 0, scan);
-  // A cleared environment or an unreadable argument matters only to a workit call it runs.
-  return scan.hit ?? (scan.runs ? scan.risky : null);
+  // A host variable, a cleared environment or an unreadable argument matters only to a workit call it runs.
+  return scan.hit ?? (scan.runs ? (scan.hostHit ?? scan.risky) : null);
 };
 
 export const identityEnvDeny = (change: string): string =>
-  `workit identity: ${change === UNREADABLE ? `this command runs workit with ${UNREADABLE}` : `this command changes ${change}`}. The host sets WORKIT_HOST, WORKIT_SESSION_ID and WORKIT_AGENT_ID, and Workit acts as who they name; run it without changing them (a verifier or reviewer passes the --session and --token its start text names).`;
+  `workit identity: ${change === UNREADABLE ? `this command runs workit with ${UNREADABLE}` : `this command changes ${change}`}. The host sets WORKIT_HOST, WORKIT_SESSION_ID, WORKIT_AGENT_ID and its own session variables, and Workit acts as who they name; run it without changing them (a verifier or reviewer passes the --session and --token its start text names).`;

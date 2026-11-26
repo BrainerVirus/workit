@@ -178,7 +178,12 @@ const HOOK_ENTRIES = [
 // every host and the Stop hook's gateStands re-checking the cited verdict's trust take core run
 // from 573,651 B to 573,983 B (+332 B; Claude Code 567,340 B, Codex 555,661 B, Cursor 555,055 B).
 // The ceiling is core run plus 2 KiB.
-const BUDGET = 576_031;
+// host-var-guard (#981, 2026-11-26, Bun 1.4.5): the identity guard reads the hosts' own session
+// variables (OPENCODE_SESSION_ID, PI_SESSION_ID, CODEX_THREAD_ID, CLAUDECODE, CLAUDE_CODE_ENTRYPOINT)
+// beside a workit call, and the claim check refuses a foreign host's variable in a Claude Code shell:
+// core run 573,983 B -> 574,246 B (+263 B; Claude Code 567,603 B, Codex 555,924 B, Cursor 555,318 B).
+// The ceiling is core run plus 2 KiB.
+const BUDGET = 576_294;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

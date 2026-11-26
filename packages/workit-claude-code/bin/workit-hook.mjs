@@ -179,6 +179,9 @@ const WORKIT_CALL = /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:\s|$)/;
 const ENV_BUILTIN = /\b(?:env|unset|export|declare|typeset|local|readonly)\b/;
 const IDENTITY_ENV =
   /WORKIT_(?:AGENT_ID|HOST|SESSION_ID|SESSION_TOKEN)|\benv\b[^\n;&|]*\s(?:-[a-z]*i|--ignore-environment|-)(?:\s|$)/;
+// A host's own session variable beside a `workit` call (#981): the guard reads it there.
+const HOST_ENV =
+  /OPENCODE_SESSION_ID|PI_SESSION_ID|CODEX_THREAD_ID|CLAUDECODE|CLAUDE_CODE_ENTRYPOINT/;
 // A lead's `workit` call goes too while a subagent's stamp waits to be claimed
 // (its call at a permission prompt, say): the runtime stamps the lead's call,
 // so one argv from two actors is ambiguous and neither claims the other's id.
@@ -780,7 +783,8 @@ const fastAllow = (() => {
         WORKIT_DELIVERY.test(command) ||
         (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
         IDENTITY_ENV.test(command.replace(/['"\\]/g, "")) ||
-        (WORKIT_CALL.test(command) && ENV_BUILTIN.test(command)) ||
+        (WORKIT_CALL.test(command) &&
+          (ENV_BUILTIN.test(command) || HOST_ENV.test(command.replace(/['"\\]/g, "")))) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         WORKIT_INLINE_ASK.test(command) ||

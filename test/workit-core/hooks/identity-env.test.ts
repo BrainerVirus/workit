@@ -121,6 +121,17 @@ const REFUSED = [
   "script -qc'env -u WORKIT_HOST workit check test' /dev/null",
   "su -lc 'env -u WORKIT_HOST workit check test' me",
   "runuser -lc 'export WORKIT_HOST=; workit check test' me",
+  // #981: a host's own session variable, set or unset beside a workit call.
+  "OPENCODE_SESSION_ID=nobody-7 workit ledger verdict verified --how x",
+  "PI_SESSION_ID=nobody-7 workit ledger verdict verified --how x",
+  "CODEX_THREAD_ID=nobody-7 workit ledger verdict verified --how x",
+  "CLAUDECODE= workit ledger verdict verified --how x",
+  "env -u CLAUDE_CODE_ENTRYPOINT workit check test",
+  "env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT CODEX_THREAD_ID=t workit check test",
+  "export OPENCODE_SESSION_ID=x; workit check test",
+  "unset CLAUDECODE && workit check test",
+  "bash -c 'PI_SESSION_ID=x workit check test'",
+  "ssh h env CODEX_THREAD_ID=x workit check test",
 ];
 
 test.each(REFUSED)("`%s` is denied for a subagent and for the lead", (command) => {
@@ -132,6 +143,8 @@ test.each([
   ["$env:WORKIT_AGENT_ID = 'v1'; workit check test"],
   ["Remove-Item env:WORKIT_HOST; workit check test"],
   ["[Environment]::SetEnvironmentVariable('WORKIT_SESSION_ID', 'x')"],
+  ["$env:CODEX_THREAD_ID = 'x'; workit check test"],
+  ["Remove-Item env:CLAUDECODE; workit check test"],
 ])("PowerShell `%s` is denied", (command) => {
   expect(identityDenied(shellPre(command, "v1", undefined, undefined, "powershell"))).toBe(true);
 });
@@ -167,12 +180,25 @@ test.each([
   ['script -qc "ls" /dev/null'],
   ["script -qc 'workit check test' /dev/null"],
   ["su -lc 'ls' me"],
+  ["grep CODEX_THREAD_ID src"],
+  ["grep -rn OPENCODE_SESSION_ID docs; workit check test"],
+  ["printenv CLAUDECODE"],
+  ["CODEX_THREAD_ID=t-1 bun test x.test.ts"],
+  ["env -u CLAUDE_CODE_ENTRYPOINT -u CLAUDECODE codex exec x"],
 ])("`%s` runs: it reads or names an identity variable without changing it", (command) => {
   expect(identityDenied(shellPre(command, "v1"))).toBe(false);
 });
 
 test("Given the documented limit (a guard against careless changes, not a sandbox), When `read` sets an identity variable, Then the guard does not read it", () => {
   expect(identityDenied(shellPre('read WORKIT_HOST <<< ""; workit check test', "v1"))).toBe(false);
+});
+
+test("PowerShell names a host's own session variable without a workit call: it runs", () => {
+  expect(
+    identityDenied(
+      shellPre("$env:CODEX_THREAD_ID = 'x'; codex", "v1", undefined, undefined, "powershell"),
+    ),
+  ).toBe(false);
 });
 
 test("Codex is judged like Claude Code; Cursor and OpenCode stamp no agent, so their hooks leave identity variables alone (Cursor's context names the id to prefix)", () => {
@@ -216,6 +242,8 @@ test("Given Claude Code's launcher, When the lead's command changes an identity 
     'WORKIT_"HOST"= workit check test',
     "env -C . -u WORKIT_HOST workit check test",
     "env --bogus-opt workit check test",
+    "OPENCODE_SESSION_ID=x workit check test",
+    "CLAUDECODE= workit check test",
   ])
     expect(reached(command), command).toBe(true);
   expect(reached("workit check test")).toBe(false);

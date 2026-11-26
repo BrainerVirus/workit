@@ -19,9 +19,12 @@ guardRealHome();
 
 // A host shell running the suite (OpenCode, Pi, Codex, a Claude Code-launched
 // host) exports its own session id, which the CLI treats as the real session:
-// a test's own WORKIT_SESSION_ID would then read as forged. Tests that need a
-// host session set these themselves.
+// a test's own WORKIT_SESSION_ID would then read as forged, and Claude Code's
+// own marks make any of those variables a foreign host's (#981). Tests that
+// need a host session set these themselves.
 for (const key of [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
   "OPENCODE_SESSION_ID",
   "PI_SESSION_ID",
   "CODEX_THREAD_ID",

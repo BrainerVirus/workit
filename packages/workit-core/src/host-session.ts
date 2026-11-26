@@ -423,6 +423,16 @@ export function sessionClaimRefusal(
 ): SessionClaimRefusal | null {
   const real = realHostSession(env);
   const host = family(real.host);
+  // Another host's variable in a Claude Code shell (#981): an agent there can
+  // set one by hand (`OPENCODE_SESSION_ID=x workit …`), and a host nested in
+  // Claude Code's Bash looks the same, so nothing vouches for the id it names.
+  const foreign = real.kind === "derived" ? foreignHostVariable(env) : null;
+  if (foreign)
+    return {
+      error: `foreign_host_session: ${foreign} names another host's session (${real.host}) in a Claude Code shell, so nothing vouches for ${claimed}`,
+      unblock:
+        "run workit without that variable: a verifier or reviewer passes the --session and --token its SubagentStart context names; a real OpenCode, Pi or Codex session records from a shell Claude Code did not start",
+    };
   // A host that always sets its own variable, named without it: the variable
   // was removed (`env -u OPENCODE_SESSION_ID`), so nothing vouches for the id.
   if (real.kind !== "derived" && host !== null && HOST_SET_VARIABLE[host])
@@ -472,6 +482,21 @@ const unboundRefusal = (claimed: string): SessionClaimRefusal => ({
   error: `unbound_session: ${claimed} was issued to a subagent, and this call did not present the token its SubagentStart hook gave it`,
   unblock: `only that subagent acts as ${claimed}: it passes --token exactly as its SubagentStart context names it (or WORKIT_SESSION_TOKEN); anyone else spawns their own verifier`,
 });
+
+/** Variables only Claude Code's own shell carries: its SessionStart export aside, the ones it sets itself. */
+const CLAUDE_CODE_MARKS = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] as const;
+
+/**
+ * The other host's session variable this shell reads, when the shell is Claude
+ * Code's (WORKIT_HOST=claude_code, CLAUDECODE or CLAUDE_CODE_ENTRYPOINT); null otherwise.
+ */
+const foreignHostVariable = (env: NodeJS.ProcessEnv): string | null => {
+  const claude =
+    env.WORKIT_HOST?.trim() === "claude_code" ||
+    CLAUDE_CODE_MARKS.some((name) => env[name]?.trim());
+  if (!claude) return null;
+  return HOST_SESSION_VARS.find(([key]) => env[key]?.trim())?.[0] ?? null;
+};
 
 /** Hosts that always put their own session variable in the agent's shell. */
 const HOST_SET_VARIABLE: Readonly<Record<string, string>> = {
