@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { gitExec, runChangelogRoll } from "./changelog-roll";
+import { writeFileAtomic } from "./safe-write";
 import { resolveWorkspaceRoot } from "./scripts";
 
 const CATEGORIES = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
@@ -275,9 +276,26 @@ function applyChangelog(
   const rolled = source.exists ? rollShipped(cwd, target, source.text) : null;
   const rendered = renderChangelog(rolled?.text ?? source.text, entries, normalizeOnly);
   if ("error" in rendered) return { error: rendered.error };
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, rendered.text, "utf8");
+  // A temp file beside it, then a rename (as `changelog roll` writes): a crash
+  // never leaves half a changelog, and writeFileAtomic keeps the file's mode.
+  writeFileAtomic(realTarget(target), rendered.text);
   return { ...rendered.result, path: target, ...(rolled ? { rolled: rolled.roll } : {}) };
+}
+
+/**
+ * `target` with its deepest existing directory resolved: writeFileAtomic
+ * refuses a symlink on the way, and a changelog inside a symlinked directory
+ * of the workspace is still the workspace's.
+ */
+function realTarget(target: string): string {
+  if (fs.existsSync(target)) return fs.realpathSync(target);
+  let dir = path.dirname(target);
+  const rest = [path.basename(target)];
+  while (!fs.existsSync(dir)) {
+    rest.unshift(path.basename(dir));
+    dir = path.dirname(dir);
+  }
+  return path.join(fs.realpathSync(dir), ...rest);
 }
 
 function renderChangelog(
@@ -308,7 +326,8 @@ function renderChangelog(
   const gap = after && newBody.trim() && !newBody.endsWith("\n\n") ? "\n" : "";
   const out = (before.endsWith("\n") ? before : before + "\n") + newBody + gap + after;
   return {
-    text: out,
+    // A CRLF changelog stays CRLF: the merged lines come back with bare LF.
+    text: source.includes("\r\n") ? out.replace(/\r?\n/g, "\r\n") : out,
     result: { ok: true, normalize_only: normalizeOnly, added: addedCounts, categories: counts },
   };
 }

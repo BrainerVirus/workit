@@ -5,7 +5,7 @@
 // An entry (a top-level bullet with its continuation lines) belongs to the
 // first `<prefix><x.y.z>` tag whose changelog already holds it, so the result
 // depends only on the tags, never on when the file was last rolled. Only the
-// file and local git (`for-each-ref`, `show`) are read: no forge, no grant.
+// file and local git (`for-each-ref`, `cat-file`) are read: no forge, no grant.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { configuredTagPrefix, git } from "../git/ops";
@@ -141,16 +141,27 @@ const entryKeys = (entry: Entry): { short: string; full: string } => {
   return { short: full.slice(0, KEY_LENGTH), full };
 };
 
-/** Every short and full key of every bullet in a changelog, any section. */
-function changelogKeys(text: string): Set<string> {
-  const doc = parseChangelog(text);
+/**
+ * Every short and full key of every bullet in a changelog, any section.
+ * `sections` caches each section's keys by its text: a release's section reads
+ * the same in every later tag, so a run over many tags parses it once.
+ */
+function changelogKeys(text: string, sections = new Map<string, string[]>()): Set<string> {
   const keys = new Set<string>();
-  for (const section of doc.sections)
-    for (const group of sectionGroups(section))
-      for (const entry of group.entries) {
-        const { short, full } = entryKeys(entry);
-        keys.add(short).add(full);
-      }
+  for (const section of parseChangelog(text).sections) {
+    const raw = section.raw.join("\n");
+    let found = sections.get(raw);
+    if (!found) {
+      found = sectionGroups(section).flatMap((group) =>
+        group.entries.flatMap((entry) => {
+          const { short, full } = entryKeys(entry);
+          return [short, full];
+        }),
+      );
+      sections.set(raw, found);
+    }
+    for (const key of found) keys.add(key);
+  }
   return keys;
 }
 
@@ -505,15 +516,109 @@ export function tagSnapshots(exec: Exec, prefix: string, file = "CHANGELOG.md"):
       return version ? [{ tag, version, date }] : [];
     })
     .toSorted((a, b) => compareVersions(a.version, b.version));
-  return rows.map((row) => {
-    let text = "";
-    try {
-      text = exec("git", ["show", `${row.tag}:${file}`]);
-    } catch {
-      // A tag from before the file existed holds no entries.
+  const specs = rows.map((row) => `${row.tag}:${file}`);
+  const texts = batchedBlobs(exec, specs) ?? specs.map((spec) => showBlob(exec, spec));
+  const sections = new Map<string, string[]>();
+  const byText = new Map<string, Set<string>>();
+  return rows.map((row, index) => {
+    const text = texts[index] ?? "";
+    let keys = byText.get(text);
+    if (!keys) {
+      keys = changelogKeys(text, sections);
+      byText.set(text, keys);
     }
-    return { ...row, keys: changelogKeys(text) };
+    return { ...row, keys };
   });
+}
+
+/** `git show <spec>`, or "" when the tag predates the file: it holds no entries. */
+function showBlob(exec: Exec, spec: string): string {
+  try {
+    return exec("git", ["show", spec]);
+  } catch {
+    return "";
+  }
+}
+
+/** At most this many blob bytes per `cat-file --batch` read, well under the 64 MiB pipe buffer. */
+const BATCH_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The blob at each `<rev>:<path>` spec ("" where there is none), read by two
+ * `git cat-file` processes instead of one `git show` per spec: a repo with
+ * hundreds of tags pays a few milliseconds per process. Each distinct blob is
+ * read once. Null when the batch answer is not exactly what was asked for (an
+ * exec that does not run git, a blob that is not UTF-8, a path that is not a
+ * file), so the caller reads them one by one with `git show`.
+ */
+function batchedBlobs(exec: Exec, specs: string[]): string[] | null {
+  if (specs.length === 0) return [];
+  if (specs.some((spec) => /[\r\n]/.test(spec))) return null;
+  let check: string[];
+  try {
+    check = exec("git", ["cat-file", "--batch-check"], `${specs.join("\n")}\n`).split("\n");
+  } catch {
+    return null;
+  }
+  const found: Array<{ oid: string; size: number } | null> = [];
+  for (const [index, spec] of specs.entries()) {
+    const line = check[index] ?? "";
+    const blob = /^([0-9a-f]{40,64}) blob (\d+)$/.exec(line);
+    if (blob) found.push({ oid: blob[1] ?? "", size: Number(blob[2]) });
+    // No such path at that tag: `git show` fails there too, so it holds no entries.
+    else if (line === `${spec} missing` || line === `${spec} ambiguous`) found.push(null);
+    else return null;
+  }
+  const contents = new Map<string, string>();
+  const pending = [
+    ...new Map(found.flatMap((f) => (f ? [[f.oid, f.size] as const] : []))).entries(),
+  ];
+  while (pending.length > 0) {
+    const chunk: Array<readonly [string, number]> = [];
+    let bytes = 0;
+    while (
+      pending.length > 0 &&
+      (chunk.length === 0 || bytes + (pending[0]?.[1] ?? 0) <= BATCH_BYTES)
+    ) {
+      const next = pending.shift();
+      if (!next) break;
+      chunk.push(next);
+      bytes += next[1];
+    }
+    const read = readBatch(exec, chunk);
+    if (!read) return null;
+    for (const [oid, text] of read) contents.set(oid, text);
+  }
+  return found.map((f) => (f ? (contents.get(f.oid) ?? "") : ""));
+}
+
+/** One `git cat-file --batch` over `blobs` (oid, byte size): each oid's text, or null on any mismatch. */
+function readBatch(
+  exec: Exec,
+  blobs: Array<readonly [string, number]>,
+): Map<string, string> | null {
+  let out: Buffer;
+  try {
+    out = Buffer.from(
+      exec("git", ["cat-file", "--batch"], `${blobs.map(([oid]) => oid).join("\n")}\n`),
+      "utf8",
+    );
+  } catch {
+    return null;
+  }
+  const texts = new Map<string, string>();
+  let at = 0;
+  for (const [oid, size] of blobs) {
+    const eol = out.indexOf(0x0a, at);
+    if (eol < 0 || out.toString("utf8", at, eol) !== `${oid} blob ${size}`) return null;
+    const end = eol + 1 + size;
+    // A blob that is not UTF-8 decodes to a different byte length, so its
+    // trailing newline would not land here.
+    if (out[end] !== 0x0a) return null;
+    texts.set(oid, out.toString("utf8", eol + 1, end));
+    at = end + 1;
+  }
+  return at === out.length ? texts : null;
 }
 
 /** Why a roll was not written: entries it would double, or lines it would drop. */
@@ -594,9 +699,9 @@ export function defaultTagPrefix(cwd: string, changelog = "", exec?: Exec): stri
 /** git in `cwd` as an Exec: stdout, or a throw on a non-zero exit. */
 export const gitExec =
   (cwd: string): Exec =>
-  (cmd, args) => {
+  (cmd, args, input) => {
     if (cmd !== "git") throw new Error(`not a git command: ${cmd}`);
-    const run = git(cwd, args);
+    const run = git(cwd, args, input === undefined ? {} : { input });
     if (!run.ok) throw new Error(run.stderr.trim() || `git ${args[0]} failed`);
     return run.stdout;
   };
