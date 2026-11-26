@@ -579,15 +579,15 @@ export const hookEntryRun = (
     });
   // An unquoted `C:\…` path loses its `\` to the POSIX reading: judged again with `/`. Every
   // `$(…)` is read on its own too, so one the reading drops (`(( $(…) ))`) still counts.
-  return (
-    scan(command) ??
-    substitutions(command)
-      .map((sub) => scan(sub))
-      .find(Boolean) ??
-    (dialect === "posix" && /[A-Za-z]:\\/u.test(command)
-      ? scan(command.replaceAll("\\", "/"))
-      : null)
-  );
+  const texts =
+    dialect === "posix" && /[A-Za-z]:\\/u.test(command)
+      ? [command, command.replaceAll("\\", "/")]
+      : [command];
+  for (const text of texts) {
+    const hit = scan(text) ?? substitutions(text).map(scan).find(Boolean);
+    if (hit) return hit;
+  }
+  return null;
 };
 
 export const hookEntryDeny = (entry: string): string =>

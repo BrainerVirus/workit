@@ -484,6 +484,8 @@ const ROUND_3 = [
   `while read -r f; do node "$f"; done <<EOF\n${H}\nEOF`,
   `(( $(bun ${R} claude_code < g.json > g.out; echo 1) > 0 ))`,
   `(( $(node ${H} | wc -c) > 0 ))`,
+  // A Windows path inside a substitution the reading drops (CI windows shard, round 3).
+  "(( $(node C:\\p\\bin\\workit-hook.mjs < g.json; echo 1) > 0 ))",
   `echo $(( $(node ${H} < p.json | wc -c) ))`,
   `at now <<< 'node ${H}'`,
   `batch <<< 'node ${H}'`,
