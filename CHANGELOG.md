@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- in a Claude Code shell, OPENCODE_SESSION_ID, PI_SESSION_ID or CODEX_THREAD_ID no longer let a session record a verdict or commit as an invented nested-host session; the identity guard also denies changing those variables, CLAUDECODE or CLAUDE_CODE_ENTRYPOINT beside a workit call (#981).
 - Removing a worker's scratch directory now retries a busy or racing directory under Bun as well as Node; Bun accepted the rmSync retry options but never retried.
 - `workit changelog apply` writes CHANGELOG.md through a temp file and a rename, keeping its mode, CRLF line endings and symlinks, and the roll before it reads every release tag's changelog in two batched git calls, so `pr create --changelog` no longer pays a git process per tag.
 - under worktree and scratch confinement, a PowerShell statement (a pwsh -c script or the PowerShell tool) or a cmd /c statement now passes only when its command is a known read; writer cmdlets and aliases, .NET static calls, & and dot-source invocation, script paths, stdin scripts, glued -EncodedCommand forms, xargs -J and find -exec {} count as writes in their run directory
