@@ -14,7 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { stateDir } from "./core/workit-paths.mjs";
-import { hostSessionFromEnv } from "./host-session";
+import { hostSessionFromEnv, realHostSession } from "./host-session";
 import { unwrapped } from "./hooks/delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./hooks/shell-words";
 
@@ -106,13 +106,21 @@ export const dropAgentStamps = (
 };
 
 /**
+ * Whether this shell runs under an agent host. There only a claimed stamp
+ * names the agent (Claude Code, Codex; OpenCode and Pi children carry their
+ * own `<lead>:<child>` session instead): a WORKIT_AGENT_ID the caller exported
+ * is not the host's word, as an unissued `<lead>:<x>` session is not.
+ */
+export const agentIdFromHostOnly = (env: NodeJS.ProcessEnv): boolean =>
+  realHostSession(env).kind !== "none";
+
+/**
  * CLI: the agent id the stamp for this session and `argv` names, consuming
- * it; null when WORKIT_AGENT_ID is already set, for a lead's call, or when no
- * single fresh stamp answers.
+ * it; null for a lead's call or when no single fresh stamp answers.
  */
 export const claimAgentStamp = (env: NodeJS.ProcessEnv, argv: readonly string[]): string | null => {
   const { session } = hostSessionFromEnv(env);
-  if (env.WORKIT_AGENT_ID?.trim() || !session) return null;
+  if (!session) return null;
   try {
     const dir = stampDir(env, session);
     const prefix = `${hash(argv.join("\0"))}.`;

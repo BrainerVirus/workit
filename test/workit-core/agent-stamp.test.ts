@@ -163,9 +163,9 @@ test("Given a subagent's stamped `workit check`, When the CLI runs it, Then its 
     WORKIT_WORKSPACE_ROOT: "",
     WORKIT_LEASE: "",
   };
-  const run = () =>
+  const run = (extra: NodeJS.ProcessEnv = {}) =>
     spawnSync(BUN, [MAIN, "check", "--json", "--cwd", root, "ok"], {
-      env,
+      env: { ...env, ...extra },
       encoding: "utf8",
       timeout: 120_000,
     });
@@ -179,10 +179,115 @@ test("Given a subagent's stamped `workit check`, When the CLI runs it, Then its 
   expect(run().status).toBe(0);
   shellPre(`workit check --json --cwd ${root} ok`, { session }, undefined, undefined, root);
   expect(run().status).toBe(0);
+  expect(agentsOf(root)).toEqual(["a1", null]);
+});
+
+const checkRepo = () => {
+  const root = repo();
+  git(root, "config", "user.email", "test@example.invalid");
+  git(root, "config", "user.name", "Workit Test");
+  git(root, "config", "commit.gpgsign", "false");
+  mkdirSync(path.join(root, ".workit"));
+  writeFileSync(
+    path.join(root, ".workit", "checks.json"),
+    JSON.stringify({ checks: { ok: [BUN, "-e", "0"] } }),
+  );
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "init");
+  return root;
+};
+const agentsOf = (root: string) => {
   const ledger = readLedger(root);
   if (!ledger.ok) throw new Error(ledger.error);
-  const checks = ledger.value.rows.filter((row) => row.type === "check");
-  expect(checks.map((row) => row.actor.agentId ?? null)).toEqual(["a1", null]);
+  return ledger.value.rows
+    .filter((row) => row.type === "check")
+    .map((row) => row.actor.agentId ?? null);
+};
+const runCheck = (root: string, env: NodeJS.ProcessEnv) => {
+  const base: NodeJS.ProcessEnv = { ...process.env, WORKIT_WORKSPACE_ROOT: "", WORKIT_LEASE: "" };
+  return spawnSync(BUN, [MAIN, "check", "--json", "--cwd", root, "ok"], {
+    env: { ...base, ...env },
+    encoding: "utf8",
+    timeout: 120_000,
+  }).status;
+};
+
+test("Given an agent shell that exports its own WORKIT_AGENT_ID, When workit runs under a host, Then only a claimed stamp names the agent: alone it is ignored, with a stamp the stamp wins", () => {
+  const root = checkRepo();
+  const session = newSession();
+  const claude = {
+    WORKIT_HOST: "claude_code",
+    WORKIT_SESSION_ID: session,
+    WORKIT_AGENT_ID: "forged",
+  };
+  expect(runCheck(root, claude)).toBe(0);
+  shellPre(
+    `workit check --json --cwd ${root} ok`,
+    { session, agent: "a1" },
+    undefined,
+    undefined,
+    root,
+  );
+  expect(runCheck(root, claude)).toBe(0);
+  // Codex's own thread variable is a host too; no host at all (CI, a terminal) keeps the variable.
+  expect(runCheck(root, { CODEX_THREAD_ID: newSession(), WORKIT_AGENT_ID: "forged" })).toBe(0);
+  expect(runCheck(root, { WORKIT_SESSION_ID: session, WORKIT_AGENT_ID: "ci-run" })).toBe(0);
+  expect(agentsOf(root)).toEqual([null, "a1", null, "ci-run"]);
+});
+
+test("Given an OpenCode child whose shell carries <lead>:<child>, When it runs a check with an exported WORKIT_AGENT_ID, Then its row keeps its own session and no forged agent", () => {
+  const root = checkRepo();
+  const child = `${newSession()}:ses_child`;
+  expect(
+    runCheck(root, {
+      OPENCODE_SESSION_ID: "ses_child",
+      WORKIT_HOST: "opencode",
+      WORKIT_SESSION_ID: child,
+      WORKIT_AGENT_ID: "forged",
+    }),
+  ).toBe(0);
+  const ledger = readLedger(root);
+  if (!ledger.ok) throw new Error(ledger.error);
+  const row = ledger.value.rows.find((one) => one.type === "check");
+  expect([row?.actor.session, row?.actor.agentId ?? null]).toEqual([child, null]);
+});
+
+test("Given a verifier's stamp waiting at a permission prompt, When the lead's identical call passes Claude Code's launcher, Then the lead's call is stamped too and neither claims the other's id", () => {
+  const session = newSession();
+  const root = repo();
+  noteAgentStamps(process.env, session, "v1", "workit check lint", { toolUseId: "toolu_v" });
+  const pre = runHook(PLUGIN_DIR, {
+    hook_event_name: "PreToolUse",
+    session_id: session,
+    transcript_path: "/tmp/x.jsonl",
+    cwd: root,
+    permission_mode: "default",
+    tool_name: "Bash",
+    tool_input: { command: "workit check lint", description: "d" },
+    tool_use_id: "toolu_lead",
+  });
+  expect(pre.status, pre.stderr).toBe(0);
+  expect(claim(session, ["check", "lint"])).toBeNull();
+  expect(claim(session, ["check", "lint"])).toBeNull();
+});
+
+test("Given no subagent stamp pending, When the lead's `workit` call passes Claude Code's launcher, Then it stays on the fast path and writes no stamp", () => {
+  const session = newSession();
+  const pre = runHook(
+    PLUGIN_DIR,
+    {
+      hook_event_name: "PreToolUse",
+      session_id: session,
+      transcript_path: "/tmp/x.jsonl",
+      cwd: repo(),
+      permission_mode: "default",
+      tool_name: "Bash",
+      tool_input: { command: "workit check lint", description: "d" },
+      tool_use_id: "toolu_lead2",
+    },
+    { WORKIT_CLAUDE_RUNTIME: "source", WORKIT_BUN: path.join(repo(), "no-bun") },
+  );
+  expect(pre.stderr).not.toContain("hook unavailable");
 });
 
 const shellPost = (command: string, session: string, toolUseId: string) =>

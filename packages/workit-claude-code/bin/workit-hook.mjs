@@ -173,6 +173,25 @@ const WORKIT_DELIVERY =
   /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:-cli)?\s+(?:pr (?:create|merge)|ci wait|git push)\b/;
 // A subagent's `workit` call gets its agent stamp in the runtime (src/agent-stamp.ts, #883).
 const WORKIT_CALL = /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:\s|$)/;
+// A lead's `workit` call goes too while a subagent's stamp waits to be claimed
+// (its call at a permission prompt, say): the runtime stamps the lead's call,
+// so one argv from two actors is ambiguous and neither claims the other's id.
+const agentStampPending = (session) => {
+  try {
+    const dir = path.join(
+      stateDir(),
+      "agent-stamps",
+      createHash("sha256").update(String(session)).digest("hex").slice(0, 32),
+    );
+    const now = Date.now();
+    return readdirSync(dir).some(
+      (name) =>
+        name.split(".")[1] !== "" && now - statSync(path.join(dir, name)).mtimeMs <= 120_000,
+    );
+  } catch {
+    return false;
+  }
+};
 // The runtime moves the verb first (`cd <dir> && workit …`, `workit --cwd
 // <dir> <verb>`) so Workit's enumerated allow rules match (hooks/cwd-normalize.ts).
 const WORKIT_REORDER = /^\s*(?:cd\s[^;|&]*&&\s*workit\s|workit\s+(?:--json\s+)*--cwd[\s=])/;
@@ -753,7 +772,7 @@ const fastAllow = (() => {
     if (SHELLS.has(value.tool_name) && typeof command === "string") {
       if (
         WORKIT_DELIVERY.test(command) ||
-        (value.agent_id && WORKIT_CALL.test(command)) ||
+        (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         WORKIT_INLINE_ASK.test(command) ||
