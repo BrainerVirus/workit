@@ -98,6 +98,22 @@ const REFUSED = [
   "strace -f env -i workit check test",
   "chroot / env FOO=1 workit check test",
   "env FOO=$(date) workit check test",
+  // Round 7 (verdict mwxf55h1): built --split-string, busybox/toybox, env inside fringe wrappers, su/script -c.
+  'env --split-string="$X WORKIT_AGENT_ID=forged workit check test"',
+  'env --split-string="$X workit check test"',
+  'env -S"$X workit check test"',
+  "busybox env -u WORKIT_HOST workit check test",
+  "toybox env WORKIT_AGENT_ID=x workit check test",
+  "busybox env -i workit check test",
+  "unshare -r env -u WORKIT_HOST workit check test",
+  "pkexec env FOO=1 workit check test",
+  "nsenter -t 1 env WORKIT_AGENT_ID=x workit check test",
+  "docker run x env -u WORKIT_HOST workit check test",
+  "run0 env FOO=1 workit check test",
+  "su -c 'env -u WORKIT_HOST workit check test' me",
+  "su me -c 'WORKIT_AGENT_ID=x workit check test'",
+  "script -q -c 'unset WORKIT_HOST; workit check test' /dev/null",
+  "runuser --command='export WORKIT_HOST=; workit check test' me",
 ];
 
 test.each(REFUSED)("`%s` is denied for a subagent and for the lead", (command) => {
@@ -135,6 +151,12 @@ test.each([
   ["watch env FOO=1 ls"],
   ["strace -f workit check test"],
   ["env.exe FOO=1 bun test"],
+  ["docker run x env FOO=1 ls"],
+  ["unshare -r env FOO=1 ls"],
+  ["busybox env FOO=1 ls"],
+  ["grep -rn env src; workit check test"],
+  ["su -c 'ls' me"],
+  ["script -q -c 'workit check test' /dev/null"],
 ])("`%s` runs: it reads or names an identity variable without changing it", (command) => {
   expect(identityDenied(shellPre(command, "v1"))).toBe(false);
 });

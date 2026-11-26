@@ -5,12 +5,13 @@
 // actor, or no host at all, and take a forged agent id. A guard against
 // careless changes, not a sandbox: it reads a prefix assignment, `env` or
 // `env.exe` (its options by arity, `-S` lines, `-i`, the assignments after
-// `--`) behind write-gate.ts's wrappers, the declare builtins (`export`,
-// `unset`, `declare`, `typeset`, `local`, `readonly`), `bash -c` scripts and
-// PowerShell `$env:NAME`; in a command that runs `workit` it also refuses
-// what it cannot read there (an unknown `env` option, an expanded argument or
-// `-S` line, a cleared environment, an env change inside a wrapper it does
-// not follow). It does not read `read`, `printf -v`, `${X:=}`, `for X in`,
+// `--`) behind write-gate.ts's wrappers and `busybox`/`toybox`, the declare
+// builtins (`export`, `unset`, `declare`, `typeset`, `local`, `readonly`),
+// `bash -c`, `su -c` and `script -c` scripts and PowerShell `$env:NAME`; in a
+// command that runs `workit` it also refuses what it cannot read there (an
+// unknown `env` option, an expanded argument or `-S` line, a cleared
+// environment, an env change inside a wrapper it does not follow or after a
+// command it does not know). It does not read `read`, `printf -v`, `${X:=}`, `for X in`,
 // `source`, an interpreter, a script file or control flow (hosts.md#host-parity).
 // Words, not text, so a `grep WORKIT_HOST` or a quoted mention passes.
 import { shellScript } from "./delivery-verbs";
@@ -97,6 +98,9 @@ const scanEnv = (
     // An argument the shell builds may be any option, assignment or the command.
     if (expands.has(index)) {
       risky(UNREADABLE);
+      // A built `--split-string=…` or glued `-S…` still names what it runs.
+      const built = options ? /^(?:--split-string=|-[\w]*S)(.+)$/su.exec(word) : null;
+      if (built) return split(built[1], index + 1, true);
       continue;
     }
     if (options && word === "--") {
@@ -163,22 +167,50 @@ const commandAt = (
     }
     const name = base(words[index]).toLowerCase();
     if (name === "env") return scanEnv(words, index + 1, expands, scan, 0);
-    if (OPAQUE.has(name)) {
-      const rest = words.slice(index + 1);
-      if (rest.some(isWorkit)) scan.runs = true;
-      if (
-        rest.some(
-          (word) => base(word) === "env" || DECLARES.has(word) || /^[A-Za-z_]\w*=/u.test(word),
-        )
-      )
-        scan.risky ??= UNREADABLE;
-      return;
+    if (OPAQUE.has(name)) return opaque(words.slice(index + 1), scan, true);
+    // `busybox env`, `toybox env`: the applet is the command.
+    if (name === "busybox" || name === "toybox") {
+      index += 1;
+      continue;
     }
     const takes = WRAPPERS[name];
     if (takes === undefined) break;
     index = pastOptions(words, index + 1, takes);
   }
   if (isWorkit(words[index])) scan.runs = true;
+  // A command Workit does not know may run an `env` later in its words (`unshare`, `pkexec`,
+  // `docker run x env …`): read like a wrapper it does not follow.
+  else if (words.slice(index + 1).some((word) => base(word).toLowerCase() === "env"))
+    opaque(words.slice(index + 1), scan, false);
+};
+
+/**
+ * The words a wrapper Workit does not follow runs: when they run `workit`, any env change
+ * in them (an `env`, a declare builtin, an assignment) is one it cannot read.
+ */
+const opaque = (rest: readonly string[], scan: Scan, assigns: boolean): void => {
+  if (!rest.some(isWorkit)) return;
+  scan.runs = true;
+  const changes = (word: string) =>
+    base(word).toLowerCase() === "env" ||
+    DECLARES.has(word) ||
+    (assigns && /^[A-Za-z_]\w*=/u.test(word));
+  if (rest.some(changes)) scan.risky ??= UNREADABLE;
+  const hit = rest.find(named);
+  if (hit && rest.some((word) => base(word).toLowerCase() === "env"))
+    scan.hit ??= hit.split("=")[0] ?? null;
+};
+
+/** The script `su -c "…"`, `runuser -c "…"` or `script -c "…"` runs, read like a `bash -c` script. */
+const loginScript = (words: readonly string[]): string | null => {
+  const at = words.findIndex((word) => /^(?:su|runuser|script)$/u.test(base(word)));
+  if (at < 0) return null;
+  for (let index = at + 1; index < words.length; index += 1) {
+    const word = words[index] ?? "";
+    if (word === "-c" || word === "--command") return words[index + 1] ?? null;
+    if (word.startsWith("--command=")) return word.slice("--command=".length);
+  }
+  return null;
 };
 
 const scanCommand = (command: string, dialect: ShellDialect, depth: number, scan: Scan): void => {
@@ -205,7 +237,7 @@ const scanCommand = (command: string, dialect: ShellDialect, depth: number, scan
       continue;
     }
     commandAt(words, scan, expanded, at);
-    const script = depth < 4 ? shellScript(words) : null;
+    const script = depth < 4 ? (shellScript(words) ?? loginScript(words)) : null;
     if (script) scanCommand(script, dialect, depth + 1, scan);
   }
 };
