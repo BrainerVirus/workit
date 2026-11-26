@@ -84,6 +84,7 @@ const RUNS_ENTRY = [
   `${CC}/bin/workit-hook.mjs < /tmp/payload.json`,
   `"./${CC}/bin/workit-hook.mjs"`,
   `node ${CC}/bin/workit-h*.mjs`,
+  "bun packages/workit-c?re/src/hooks/r*.ts claude_code",
   `npx tsx ${CC}/src/hook.ts`,
   `bunx tsx ${CC}/src/run.ts`,
   `deno run -A ${RUN} claude_code`,

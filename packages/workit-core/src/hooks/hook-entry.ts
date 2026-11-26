@@ -107,25 +107,42 @@ const expand = (word: string, vars: ReadonlyMap<string, string>): string =>
     })
     .replace(/^~(?=[\\/]|$)/u, os.homedir());
 
-/** A glob's matches in its literal directory (one level), or the word itself. */
+/** The paths an absolute glob expands to, segment by segment (at most 64), or the path itself. */
 const globbed = (file: string): string[] => {
-  const leaf = path.basename(file);
-  if (!/[*?[]/u.test(leaf) || /[*?[]/u.test(path.dirname(file))) return [file];
-  const pattern = new RegExp(
-    `^${leaf
-      .replace(/[.+^$(){}|\\]/gu, "\\$&")
-      .replace(/\[!/gu, "[^")
-      .replaceAll("*", ".*")
-      .replaceAll("?", ".")}$`,
-    "u",
-  );
-  try {
-    return readdirSync(path.dirname(file))
-      .filter((name) => pattern.test(name))
-      .map((name) => path.join(path.dirname(file), name));
-  } catch {
-    return [file];
+  if (!/[*?[]/u.test(file)) return [file];
+  const { root } = path.parse(file);
+  let found = [root];
+  for (const part of file.slice(root.length).split(/[\\/]/u).filter(Boolean)) {
+    if (!/[*?[]/u.test(part)) {
+      found = found.map((dir) => path.join(dir, part));
+      continue;
+    }
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(
+        `^${part
+          .replace(/[.+^$(){}|\\]/gu, "\\$&")
+          .replace(/\[!/gu, "[^")
+          .replaceAll("*", ".*")
+          .replaceAll("?", ".")}$`,
+        "u",
+      );
+    } catch {
+      return [file];
+    }
+    found = found
+      .flatMap((dir) => {
+        try {
+          return readdirSync(dir)
+            .filter((name) => pattern.test(name))
+            .map((name) => path.join(dir, name));
+        } catch {
+          return [];
+        }
+      })
+      .slice(0, 64);
   }
+  return found.length > 0 ? found : [file];
 };
 
 type Scan = {
