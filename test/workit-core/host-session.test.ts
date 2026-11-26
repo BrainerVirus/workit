@@ -425,4 +425,8 @@ test("verdictCommand names --cwd bare when safe and single-quoted otherwise, so 
   expect(line("/home/u/wt/x")).toContain("--cwd /home/u/wt/x --kind");
   expect(line('/home/u/my $HOME `x` "q"')).toContain("--cwd '/home/u/my $HOME `x` \"q\"' --kind");
   expect(line("/home/u/it's")).toContain(`--cwd '/home/u/it'\\''s' --kind`);
+  // #880: with no known checkout the line still carries --cwd, as a placeholder to fill.
+  expect(verdictCommand({ branch: "b", judge: "reviewer" })).toContain(
+    "--cwd <candidate worktree> --kind review",
+  );
 });

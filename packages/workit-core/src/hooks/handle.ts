@@ -131,7 +131,7 @@ const isolatedGit = (cwd: string): string =>
   }; add Co-Authored-By with \`git commit --trailer\` in the same commit, never by amending), never \`workit git …\`: Claude Code's worktree isolation refuses a command that wraps git and cannot be turned off (https://code.claude.com/docs/en/worktrees#how-claude-code-enforces-isolation). Never dodge that check by renaming or re-wrapping git. Use workit for the non-git verbs (\`workit check\`, \`workit ledger\`, \`workit pr\`).`;
 
 /** A verdict run from a temp dir finds no ledger: it names the candidate's checkout (wave 11 C1). */
-const JUDGE_CWD = " Add `--cwd <candidate worktree>` when your shell is elsewhere.";
+const JUDGE_CWD = " Point `--cwd` at the candidate worktree when it differs.";
 
 const subagentStartText = (
   input: HookInput,
