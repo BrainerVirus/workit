@@ -639,3 +639,12 @@ test("Given a verifier or reviewer, When it writes a probe in the candidate work
       }
     }
 });
+
+test("Given a judge or an implementer in the lead's checkout, When a cmd /c or pwsh -c script writes there, Then it is denied; a read-only script runs", () => {
+  const implementer = { id: "impl-cmd", type: "workit:implementer" };
+  expect(bash(`cmd /c "cd src && echo a > f"`, { id: "ver-cmd" })?.permissionDecision).toBe("deny");
+  expect(bash(`pwsh -c "Set-Content f a"`, implementer)?.permissionDecision).toBe("deny");
+  for (const agent of [{ id: "ver-cmd" }, implementer])
+    for (const command of ["cmd /c dir", "pwsh -c Get-ChildItem"])
+      expect(bash(command, agent)?.permissionDecision, command).toBeUndefined();
+});

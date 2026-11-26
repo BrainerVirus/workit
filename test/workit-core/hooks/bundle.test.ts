@@ -131,7 +131,11 @@ const HOOK_ENTRIES = [
 // `install -l` and `rsync --link-dest` take core run from 554,496 B to 557,329 B (+2,833 B; Claude
 // Code 550,682 B, Codex 539,005 B, Cursor 538,399 B). The ceiling is core run plus 2 KiB; whichever
 // of this and #956 merges second reconciles it.
-const BUDGET = 559_377;
+// compound cmd /c (#891, 2026-11-26, Bun 1.4.5): `cmd /c` and `pwsh -c` scripts read statement by
+// statement, and `xargs`/`parallel` fed a guarded path on stdin, take core run from 557,329 B to
+// 558,062 B (+733 B; Claude Code 551,414 B, Codex 539,737 B, Cursor 539,131 B). The ceiling is core
+// run plus 2 KiB; whichever of this and #956 merges second reconciles it.
+const BUDGET = 560_110;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

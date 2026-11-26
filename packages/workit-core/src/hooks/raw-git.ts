@@ -290,7 +290,7 @@ const XARGS_VALUES = new Set(
  * with `-I R` replaced per input line. Input that is not spelled out on
  * the command line adds nothing, like a `$VAR` name it stays unjudged.
  */
-const xargsCommands = (words: string[], input: string | undefined): string[][] => {
+export const xargsCommands = (words: string[], input: string | undefined): string[][] => {
   let replace: string | null = null;
   let index = 1;
   for (; index < words.length; index++) {
@@ -342,7 +342,7 @@ const POWERSHELL_VALUES =
  * names match case-insensitively and by unambiguous prefix. Null for a
  * script file or an interactive shell.
  */
-const powershellScript = (words: string[], stdin?: string): string | null => {
+export const powershellScript = (words: string[], stdin?: string): string | null => {
   for (let index = 1; index < words.length; index++) {
     const word = words[index];
     if (!/^[-/]/.test(word)) return null;
@@ -368,7 +368,7 @@ const powershellScript = (words: string[], stdin?: string): string | null => {
 };
 
 /** The script `cmd /c …` (or `/k`) runs. */
-const cmdScript = (words: string[]): string | null => {
+export const cmdScript = (words: string[]): string | null => {
   const at = words.findIndex((word, index) => index > 0 && /^\/[ck]$/i.test(word));
   if (at > 0) return words.slice(at + 1).join(" ");
   const attached = words.find((word, index) => index > 0 && /^\/[ck]./i.test(word));
@@ -411,7 +411,7 @@ const scriptCommand = (words: string[]): string | undefined => {
 const PARALLEL_VALUES = new Set(["-j", "--jobs", "-N", "-n", "-S", "--sshlogin", "-P", "--delay"]);
 
 /** The commands `parallel cmd … ::: a b` runs: one per argument after `:::`. */
-const parallelCommands = (words: string[]): string[][] => {
+export const parallelCommands = (words: string[]): string[][] => {
   let index = 1;
   while (index < words.length && words[index].startsWith("-"))
     index += PARALLEL_VALUES.has(words[index]) ? 2 : 1;

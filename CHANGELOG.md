@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- the registry guard now reads a compound `cmd /c "…"` or `pwsh -Command "…"` script statement by statement, and judges `xargs` or `parallel` fed a guarded path on stdin, so a link into a guarded path hidden there is denied.
 - Checks running without a slot no longer starve an aged suite waiting on memory; a killed or hung one is pruned or reaped (`workit lock status` shows `stuck?`, `workit lock reap` frees it); wait estimates count no slot for short or io waiters; `workit lock`, `workit run` and `workit fanout plan` read a check's own `heavy`.
 - the registry and ledger guards deny a link or mount (`ln`, symbolic too, `cp -l|-s`, `mount`, `bindfs`) whose source is or holds Workit's state, config or a ledger, so a write through it later in the same command no longer slips past; a ledger under a git common dir not named `.git` (a bare repository, `--separate-git-dir`) is guarded; and the Stop hook stops trusting a `pr.gate` row once the verdict it cited is voided or its set cover expires (#891).
 
