@@ -120,7 +120,12 @@ const HOOK_ENTRIES = [
 // load, moved from task-contract.ts to core/operations.ts, which no hook loads. Core run 613,480 B ->
 // 553,461 B (Claude Code 606,835 -> 546,812, Codex 595,155 -> 535,135, Cursor 594,549 -> 534,529);
 // the ceiling is core run plus 2 KiB. A hook bundle must not load classic zod again (FORBIDDEN below).
-const BUDGET = 555_509;
+// set-verdict (#955, 2026-11-25, Bun 1.4.5, rebased on 55c42828): the ledger guard (the verdict store,
+// repository and folder ledgers, the Windows unquoted check), the Stop hook's pr.gate read, the
+// sealed additiveRiskPaths schema key and the effectful-append deny-list take core run from 553,461 B
+// to 554,496 B (+1,035 B; Claude Code 547,847 B, Codex 536,170 B, Cursor 535,564 B). The ceiling is
+// core run plus 2 KiB; whichever of #955 and #956 merges second reconciles it.
+const BUDGET = 556_544;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

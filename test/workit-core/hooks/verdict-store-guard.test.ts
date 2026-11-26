@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
+import { unquotedWindowsRegistry } from "@/packages/workit-core/src/hooks/write-gate";
 import { fixture, tempRoot } from "./hook-fixtures";
 
 const base = mkdtempSync(path.join(tmpdir(), "workit-verdict-guard-"));
@@ -17,6 +18,7 @@ beforeAll(() => {
   process.env.WORKIT_STATE_DIR = state;
   mkdirSync(path.join(state, "verdicts", "sets"), { recursive: true });
   mkdirSync(ledger, { recursive: true });
+  mkdirSync(path.join(state, "folders", "app-1a2b", "ledger"), { recursive: true });
 });
 afterAll(() => {
   if (saved === undefined) delete process.env.WORKIT_STATE_DIR;
@@ -39,6 +41,7 @@ const claude = (toolName: string, toolInput: Record<string, unknown>) =>
   ).hookSpecificOutput;
 
 const TARGETS = [
+  path.join(state, "folders", "app-1a2b", "ledger", "ledger.jsonl"),
   path.join(state, "verdicts", "sets", "ledger.jsonl"),
   path.join(state, "verdicts", "0123abcd", "ledger.jsonl"),
   path.join(ledger, "ledger.jsonl"),
@@ -66,4 +69,22 @@ test("G shell writes into the verdict store or a ledger, W Claude Code runs them
       expect(claude("Bash", { command })?.permissionDecision, command).toBe("deny");
   expect(claude("Bash", { command: `cat ${TARGETS[0]}` })).toBeUndefined();
   expect(claude("Bash", { command: `wc -l ${TARGETS[2]}` })).toBeUndefined();
+});
+
+test("G Windows paths with unquoted backslashes into the verdict store or a ledger, W written, T denied; read, T allowed", () => {
+  const prior = process.env.WORKIT_STATE_DIR;
+  process.env.WORKIT_STATE_DIR = "C:\\st";
+  try {
+    const cases: Array<[string, string | null]> = [
+      ["echo x >> C:\\st\\verdicts\\sets\\ledger.jsonl", "ledger"],
+      ["cp x.jsonl C:\\st\\folders\\app-1a2b\\ledger\\ledger.jsonl", "ledger"],
+      ["echo x >> C:\\repo\\.git\\workit\\ledger\\ledger.jsonl", "ledger"],
+      ["type C:\\st\\verdicts\\sets\\ledger.jsonl > copy.txt", null],
+      ["echo x > C:\\st\\folders\\app-1a2b\\tasks\\note.txt", null],
+    ];
+    for (const [command, want] of cases)
+      expect(unquotedWindowsRegistry(command, "win32"), command).toBe(want as never);
+  } finally {
+    process.env.WORKIT_STATE_DIR = prior;
+  }
 });

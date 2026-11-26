@@ -1972,6 +1972,9 @@ const guardedInodes = (state: string, configs: string[]): Map<string, Registry> 
           path.join(state, name),
           name === "approvals" ? "approvals" : name === "verdicts" ? "ledger" : "issued",
         );
+    // A non-git folder's ledger (<state>/folders/<slug>/ledger).
+    for (const slug of readdirSync(path.join(state, "folders")))
+      add(path.join(state, "folders", slug, "ledger"), "ledger");
   } catch {
     // An unreadable state dir: the files read so far.
   }
@@ -2052,9 +2055,11 @@ export const underRegistry = (
   platform: NodeJS.Platform = process.platform,
   real: (file: string) => string = (file) => file,
 ): Registry | null => {
-  const first = partsUnder(state, cwd, target, platform, real)?.[0];
+  const parts = partsUnder(state, cwd, target, platform, real) ?? [];
+  const first = parts[0];
   if (first?.startsWith("issued")) return "issued";
-  if (first === "verdicts") return "ledger";
+  // The verdict store, or a non-git folder's ledger (<state>/folders/<slug>/ledger).
+  if (first === "verdicts" || (first === "folders" && parts[2] === "ledger")) return "ledger";
   return first === "approvals" ? "approvals" : null;
 };
 
@@ -2102,13 +2107,24 @@ export const unquotedWindowsRegistry = (
   const text = flat(command);
   const state = flat(resolveStateDir());
   const configs = configDirs().map(flat);
+  // The verdict store, a repository ledger, or a non-git folder's ledger.
+  const folders = `${state}/folders/`;
+  const ledger = (at: string) =>
+    at.includes(`${state}/verdicts`) ||
+    /\/\.git\/workit\/ledger(?:[/\s'"]|$)/.test(at) ||
+    at
+      .split(folders)
+      .slice(1)
+      .some((rest) => /^[^/\s]+\/ledger(?:[/\s'"]|$)/.test(rest));
   const registry: Registry | null = text.includes(`${state}/issued`)
     ? "issued"
     : text.includes(`${state}/approvals`)
       ? "approvals"
-      : configs.some((dir) => text.includes(dir))
-        ? "grants"
-        : null;
+      : ledger(text)
+        ? "ledger"
+        : configs.some((dir) => text.includes(dir))
+          ? "grants"
+          : null;
   if (!registry) return null;
   const spans = command.replace(/[^\s'"|;&<>()]*\\[^\s'"|;&<>()]*/g, (word) =>
     word.replaceAll("\\", "/"),
@@ -2131,7 +2147,9 @@ export const unquotedWindowsRegistry = (
         ? configs.some((cfg) =>
             [cfg, `${cfg}/`, ...CONFIG_FILES.map((name) => `${cfg}/${name}`)].includes(at),
           )
-        : at.includes(`${state}/${registry}`);
+        : registry === "ledger"
+          ? ledger(at)
+          : at.includes(`${state}/${registry}`);
     });
   return writes.writes && (writes.targets === null || writes.targets.some(named)) ? registry : null;
 };

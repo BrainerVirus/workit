@@ -113,7 +113,9 @@ const reachTests = (dirs: ReachDirs) => {
     file === LOST ||
     configs.some((dir) => within(dir, file)) ||
     (within(state, file) &&
-      /^(?:issued[^\\/]*|approvals|verdicts)(?:[\\/]|$)/.test(path.relative(state, file))) ||
+      /^(?:issued[^\\/]*|approvals|verdicts|folders[\\/][^\\/]+[\\/]ledger)(?:[\\/]|$)/.test(
+        path.relative(state, file),
+      )) ||
     /[\\/]\.git[\\/]workit[\\/]ledger(?:[\\/]|$)/.test(file);
   const above = (file: string) => within(file, state) || configs.some((dir) => within(file, dir));
   const linked = (file: string) => {

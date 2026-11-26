@@ -335,7 +335,7 @@
             }
           },
           "additiveRiskPaths": {
-            "description": "Sealed risk paths for additive edits (grants.md).",
+            "description": "Risk-path globs whose purely additive edits follow the review lane of the rest of the diff. Only the user sets it; it counts only while sealed.",
             "type": "array",
             "items": {
               "type": "string",
