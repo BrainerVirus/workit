@@ -180,6 +180,24 @@ test("a verdict session claim: the real session, a child naming its own host ses
   }
 });
 
+test("Given a Claude Code shell, When another host's session variable names the session, Then the claim is refused as foreign, whatever id it names (#981)", () => {
+  const claude: NodeJS.ProcessEnv[] = [
+    { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" },
+    { CLAUDECODE: "1" },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  ];
+  for (const shell of claude)
+    for (const [key, claimed] of [
+      ["OPENCODE_SESSION_ID", "nobody-7"],
+      ["PI_SESSION_ID", "lead:nobody-7"],
+      ["CODEX_THREAD_ID", "nobody-7"],
+    ] as const)
+      expect(
+        sessionClaimRefusal({ ...shell, [key]: "nobody-7" }, claimed)?.error,
+        `${key} ${JSON.stringify(shell)}`,
+      ).toStartWith(`foreign_host_session: ${key} names another host's session`);
+});
+
 test("the issued-session record stays bounded per lead and keeps the newest ids", () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "wk-issued-"));
   freshState(cwd);
