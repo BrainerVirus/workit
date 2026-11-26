@@ -8,6 +8,7 @@ import type { PrRef, PrState } from "@/packages/workit-core/src/forge/types";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { spawnHeavyTimeout } from "@/test/shared/timeouts";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 // #835: `gc --branches` deletes a local branch only on proof its work is on
 // the trunk (a merged PR at its tip into the trunk or a long-lived branch,
@@ -24,8 +25,7 @@ afterAll(() => home.restore());
 const roots: string[] = [];
 afterEach(() => {
   rmSync(path.join(home.configDir, "config.json"), { force: true });
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const root of roots.splice(0)) removeDir(root);
 });
 
 const git = (cwd: string, ...args: string[]) =>

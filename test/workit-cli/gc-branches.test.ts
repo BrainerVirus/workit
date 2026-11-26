@@ -1,7 +1,7 @@
 import "@/test/shared/state-isolation";
 import { afterAll, afterEach, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BranchForge } from "@/packages/workit-core/src/core/cleanup";
@@ -12,6 +12,7 @@ import { connect, forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common
 import { replayRunner } from "@/test/shared/helpers/forge-replay";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import { spawnHeavyTimeout } from "@/test/shared/timeouts";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 // #835: `workit gc --branches [--apply]` lists (and deletes) local branches
 // whose work is on the trunk. Every gc form refuses an argument it does not
@@ -31,8 +32,7 @@ afterAll(() => home.restore());
 const roots: string[] = [];
 afterEach(() => {
   Object.assign(gcDeps, original);
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const root of roots.splice(0)) removeDir(root);
 });
 
 const git = (cwd: string, ...args: string[]) =>

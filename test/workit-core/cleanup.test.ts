@@ -23,6 +23,7 @@ import {
 } from "@/packages/workit-core/src/core/cleanup";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { spawnHeavyTimeout } from "@/test/shared/timeouts";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 // #653: nothing a finished change made stays on disk. After a merge the
 // branch's clean Workit worktree and local branch go, recorded in the ledger;
@@ -32,11 +33,10 @@ import { spawnHeavyTimeout } from "@/test/shared/timeouts";
 setDefaultTimeout(spawnHeavyTimeout());
 
 // On Windows a git child that just exited can still hold a handle in the repo
-// for a moment, so the first rm fails EBUSY (2026-11-04, #415); rmSync retries.
+// for a moment, so the first rm fails EBUSY (2026-11-04, #415); removeDir retries.
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const root of roots.splice(0)) removeDir(root);
 });
 
 const git = (cwd: string, ...args: string[]) =>

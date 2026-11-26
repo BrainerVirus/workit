@@ -5,7 +5,7 @@
 // the one real test starts its own dummy launcher and child.
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -23,6 +23,7 @@ import { openProcs, reapOrphans, stopProcesses } from "@/packages/workit-core/sr
 import { stateDir } from "@/packages/workit-core/src/core/workit-paths.mjs";
 import { readLedger } from "@/packages/workit-core/src/ledger";
 import { readProc, type ProcRow } from "@/packages/workit-core/src/store/threads/procs";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 const savedTree = { ...procTree };
 const savedBrowsers = { ...browserDeps };
@@ -33,8 +34,7 @@ afterEach(() => {
   Object.assign(browserDeps, savedBrowsers);
   table.clear();
   sent.length = 0;
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const dir of dirs.splice(0)) removeDir(dir);
 });
 
 const temp = (prefix: string) => {

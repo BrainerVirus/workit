@@ -21,6 +21,7 @@ import { procTree } from "@/packages/workit-core/src/core/proc-tree";
 import { browserDeps } from "@/packages/workit-core/src/core/browsers";
 import { readProc, upsertProc, type ProcRow } from "@/packages/workit-core/src/store/threads/procs";
 import { readLedger } from "@/packages/workit-core/src/ledger";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 const dirs: string[] = [];
 const savedDocker = procsDeps.docker;
@@ -65,8 +66,7 @@ afterEach(() => {
   table.clear();
   sent.length = 0;
   // Windows: a git child that just exited can hold a handle for a moment (#415).
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const dir of dirs.splice(0)) removeDir(dir);
 });
 
 const temp = (prefix: string) => {
