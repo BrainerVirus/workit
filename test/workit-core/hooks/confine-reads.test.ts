@@ -714,6 +714,52 @@ test("Given a transparent or an opaque wrapper, When a judge or an implementer o
   allowed(implementer, ["flock /tmp/l touch x", "ssh host ls"]);
 });
 
+// #880: code Workit cannot read as text counts as a write in its run directory, like `ssh`.
+test("Given a PowerShell script file, an encoded command, iex, a cmd variable target or a stdin-named xargs command, When a judge or an implementer outside its worktree runs it, Then it is denied; the read-only forms run", () => {
+  const writers = [
+    "pwsh -File x.ps1",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -f x.ps1",
+    "pwsh x.ps1",
+    "powershell.exe -EncodedCommand ZQBjAGgAbwA=",
+    "pwsh -enc ZQBjAGgAbwA=",
+    "pwsh -e ZQBjAGgAbwA=",
+    `pwsh -c "iex 'rm -r src'"`,
+    `powershell -Command "'rm src' | Invoke-Expression"`,
+    `pwsh -c "$s = 'rm src'; iex $s"`,
+    `cmd /c "set X=C:\\w&& mklink /J %X% src"`,
+    `cmd /c "set X=out&& echo a > %X%"`,
+    `cmd /v:on /c "set X=out&& echo a > !X!"`,
+    `cmd /c "echo a > %TEMP%\\f"`,
+    "echo touch | xargs -I{} {} f",
+    "echo touch | xargs -I % % f",
+    "echo touch | xargs -i {} f",
+    "echo touch | xargs --replace=@ env @ f",
+    "echo touch | xargs sh -c '$0 f'",
+    "echo touch | parallel {} f",
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+  const reads = [
+    "pwsh -c Get-ChildItem",
+    "pwsh -NoProfile -Command Get-ChildItem src",
+    "powershell Get-ChildItem",
+    "cmd /c dir",
+    `cmd /c "echo %PATH%"`,
+    "xargs cat",
+    "ls | xargs -I{} cat {}",
+  ];
+  allowed(verifier, reads);
+  allowed(
+    implementer,
+    reads.map((command) => `cd ${lead} && ${command}`),
+  );
+  allowed(implementer, ["pwsh -File x.ps1", "echo touch | xargs -I{} {} f"]);
+});
+
 // Round 3, group 4: awk's commands and pipes, sed's `w`, `W` and `e`, a program file, `deno
 // eval`, `tsx -e` and `ts-node -e` write wherever they run; `ftruncate` is a writer like `truncate`.
 test("Given awk or sed that writes or runs a command, deno eval, tsx -e, ts-node -e or an ftruncate, When a judge or an implementer outside its worktree runs it, Then it is denied; the read-only forms run", () => {

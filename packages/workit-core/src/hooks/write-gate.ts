@@ -36,6 +36,7 @@ import {
   cmdScript,
   inWorkitWorkspace,
   parallelCommands,
+  powershellOpaque,
   powershellScript,
   rawInvocations,
   xargsCommands,
@@ -726,8 +727,11 @@ const shellScript = (words: readonly string[]): string | null => {
   return null;
 };
 
+/** A cmd variable reference: `%X%`, or `!X!` under delayed expansion. */
+const CMD_VAR = /%[^%\s]+%|![^!\s]+!/;
+
 /** xargs options that take the next word as their value. */
-const XARGS_VALUE = /^-[IinLPdsEa]$/;
+const XARGS_VALUE = /^-[InLPdsEa]$/;
 
 /** The command `xargs` (or `find -exec`) runs with `{}` filled in by a path. */
 const runsWriter = (words: readonly string[]): boolean => {
@@ -757,13 +761,29 @@ const opaqueWrites = (
   const words = pastLead(input);
   if (words[0] === "xargs") {
     let at = 1;
-    while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
-    return runsWriter(words.slice(at)) ? ["."] : null;
+    let token = "{}";
+    for (; words[at]?.startsWith("-"); at += XARGS_VALUE.test(words[at]) ? 2 : 1)
+      token =
+        words[at] === "-I"
+          ? (words[at + 1] ?? token)
+          : (/^-[Ii](.+)|^--replace=(.+)/s.exec(words[at])?.slice(1).join("") ?? token);
+    // A command named by stdin (`echo touch | xargs -I{} {} f`) may be any writer.
+    const named = pastLead(words.slice(at))[0] ?? "";
+    return named.includes(token) || named.includes("{}") || runsWriter(words.slice(at))
+      ? ["."]
+      : null;
   }
   const [verb, ...args] = words;
-  const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
-  // Wrappers whose command Workit does not follow (a lock file first, a remote host, a typescript).
-  if (/^(?:flock|watch|ssh|parallel|script|su|runuser|strace)$/.test(name)) return ["."];
+  const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase().replace(/\.exe$/, "");
+  // Wrappers whose command Workit does not follow (a lock file first, a remote host, a typescript),
+  // and PowerShell code that is not text here: a script file, an encoded command, `iex`.
+  if (
+    /^(?:flock|watch|ssh|parallel|script|su|runuser|strace|iex|invoke-expression)$/.test(name) ||
+    ((name === "pwsh" || name === "powershell") && powershellOpaque(words))
+  )
+    return ["."];
+  // `set X=…&& mklink /J %X% …`: a link whose name or target is a cmd variable.
+  if (name === "mklink" && args.some((arg) => CMD_VAR.test(arg))) return ["."];
   const files = operands(args);
   const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
   const listed = (named: string[]) => (named.length ? named : ["."]);
@@ -2015,8 +2035,11 @@ const segmentTargets = (
         );
     // `cmd /c "cd x && mklink …"`, `pwsh -c "a; b"`: every statement of the script.
     const windows = strict && depth < 4 ? windowsScript(words, segment.stdin?.join("\n")) : null;
+    // A cmd target spelled `%X%` or `!X!` (`set X=…&& mklink /J %X% …`) is a value Workit does not read.
+    const cmd = /^cmd(?:\.exe)?$/.test(commandName(pastLead(words)[0] ?? ""));
     if (windows !== null && dir !== undefined)
-      targets.push(...segmentTargets(dir, windows, "powershell", depth + 1, strict, vars));
+      for (const file of segmentTargets(dir, windows, "powershell", depth + 1, strict, vars))
+        targets.push(cmd && CMD_VAR.test(file) ? placeholderIn(dir, `${OPAQUE_TARGET}cmd`) : file);
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
     const bare = strict && depth < 4 ? unwrapped(words) : null;
     if (bare?.length && dir !== undefined)
