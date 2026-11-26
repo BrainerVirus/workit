@@ -1,7 +1,9 @@
 // #981: a foreign host's session variable set inside a Claude Code shell
 // (`OPENCODE_SESSION_ID=nobody-7 workit ledger verdict …`) must not act as a
 // nested host whose shell vouches for the session: the lead would judge its
-// own branch as an invented, independent-looking session.
+// own branch as an invented, independent-looking session. #986: the same on
+// every host: two host session variables, or one that disagrees with the
+// shell's own host (WORKIT_HOST, Claude Code's or Cursor's marks).
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -119,3 +121,95 @@ test.each([
     expect(await gateAccepts(root)).toBe(true);
   },
 );
+
+// #986: each host's own shell, and a foreign variable added to it.
+const hostShells: ReadonlyArray<readonly [string, NodeJS.ProcessEnv, string]> = [
+  ["Codex", { CODEX_THREAD_ID: "t-lead" }, "PI_SESSION_ID"],
+  ["Pi", { PI_SESSION_ID: "pi-lead" }, "OPENCODE_SESSION_ID"],
+  ["OpenCode", { WORKIT_HOST: "opencode", OPENCODE_SESSION_ID: "ses_lead" }, "CODEX_THREAD_ID"],
+  ["Cursor", { CURSOR_AGENT: "1", WORKIT_SESSION_ID: "lead" }, "OPENCODE_SESSION_ID"],
+  ["a WORKIT_HOST=codex_cli shell", { WORKIT_HOST: "codex_cli" }, "OPENCODE_SESSION_ID"],
+  ["a WORKIT_HOST=cursor shell", { WORKIT_HOST: "cursor" }, "PI_SESSION_ID"],
+];
+
+test.each(hostShells)(
+  "Given a real %s shell, When it records a verdict with a foreign host variable, Then it is refused and the merge gate takes no independent verdict (#986)",
+  async (_label, shell, foreign) => {
+    const root = featureRepo("lead");
+    // The issue's forgery (OPENCODE_SESSION_ID, first by read order) and another
+    // host's; replacing the shell's own variable is the identity guard's (#981).
+    for (const variable of new Set([foreign, "OPENCODE_SESSION_ID"])) {
+      if (variable in shell) continue;
+      const recorded = await verdict(root, { ...shell, [variable]: "nobody-7" });
+      expect(recorded.code, `${variable}: ${recorded.stdout}`).toBe(3);
+      expect(JSON.parse(recorded.stdout).error).toStartWith("foreign_host_session");
+    }
+    expect(await gateAccepts(root)).toBe(false);
+  },
+);
+
+test.each(hostShells)(
+  "Given a real %s shell, When it commits with a foreign host variable, Then the commit is refused (#986)",
+  async (_label, shell, foreign) => {
+    const root = featureRepo("lead");
+    writeFileSync(path.join(root, "more.txt"), "more\n");
+    const commit = await run(
+      root,
+      ["git", "commit", "-m", "feat: more", "--json", "--", "more.txt"],
+      { ...shell, [foreign]: "nobody-7" },
+    );
+    expect(commit.code, commit.stdout).toBe(3);
+    expect(commit.stdout).toContain("foreign_host_session");
+  },
+);
+
+test.each(hostShells)(
+  "Given a real %s shell, When it records a --self verdict with a foreign host variable, Then it is refused, never recorded under the foreign session (#986)",
+  async (_label, shell, foreign) => {
+    const root = featureRepo("lead");
+    const recorded = await run(
+      root,
+      ["ledger", "verdict", "verified", "--self", "--how", "x", "--json"],
+      { ...shell, [foreign]: "nobody-7" },
+    );
+    expect(recorded.code, recorded.stdout).toBe(3);
+    expect(JSON.parse(recorded.stdout).error).toStartWith("foreign_host_session");
+    const list = await run(root, ["ledger", "list", "--json"], claudeLead);
+    expect(list.stdout).not.toContain("nobody-7");
+  },
+);
+
+test.each([
+  ["Codex", { CODEX_THREAD_ID: "t-verifier" }],
+  ["Codex Desktop", { WORKIT_HOST: "codex_desktop", CODEX_THREAD_ID: "t-verifier" }],
+  ["Pi", { PI_SESSION_ID: "pi-verifier" }],
+  ["OpenCode", { WORKIT_HOST: "opencode", OPENCODE_SESSION_ID: "ses_verifier" }],
+])(
+  "Given a real %s lead's own shell, When it records a verdict on another session's branch and commits, Then both are accepted (#986)",
+  async (_label, env) => {
+    const root = featureRepo("lead");
+    const recorded = await verdict(root, env);
+    expect(recorded.code, recorded.stdout).toBe(0);
+    expect(JSON.parse(recorded.stdout).data.self).toBe(false);
+    expect(await gateAccepts(root)).toBe(true);
+    writeFileSync(path.join(root, "more.txt"), "more\n");
+    const commit = await run(
+      root,
+      ["git", "commit", "-m", "feat: more", "--json", "--", "more.txt"],
+      env,
+    );
+    expect(commit.code, commit.stdout).toBe(0);
+  },
+);
+
+test("Given a real Cursor shell, When a session names itself with --session, Then its verdict is recorded and the gate takes it (#986)", async () => {
+  const root = featureRepo("lead");
+  const recorded = await run(
+    root,
+    ["--session", "cursor-verifier", "ledger", "verdict", "verified", "--how", "x", "--json"],
+    { CURSOR_AGENT: "1" },
+  );
+  expect(recorded.code, recorded.stdout).toBe(0);
+  expect(JSON.parse(recorded.stdout).data.self).toBe(false);
+  expect(await gateAccepts(root)).toBe(true);
+});
