@@ -64,6 +64,22 @@ const REFUSED = [
   "WORKIT_SESSION_ID=x",
   "cd /w && WORKIT_HOST= workit check test",
   "bash -c 'unset WORKIT_HOST; workit check test'",
+  // Round 5 (verdict mwxcjy8l): env options read by arity, -S lines, and what Workit cannot read.
+  "env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -C . -u WORKIT_HOST WORKIT_AGENT_ID=forged workit check test",
+  "env -C . -u WORKIT_HOST workit check test",
+  "env -C. -u WORKIT_HOST workit check test",
+  "env --chdir=. WORKIT_AGENT_ID=x workit check test",
+  "env --chdir . WORKIT_AGENT_ID=x workit check test",
+  "env -a foo -u WORKIT_HOST workit check test",
+  "env -vC . -u WORKIT_HOST workit check test",
+  "env -S 'WORKIT_AGENT_ID=x workit check test'",
+  "env --split-string='-u WORKIT_HOST workit check test'",
+  "V=WORKIT_AGENT_ID; env $V=x workit check test",
+  'env "$(printf WORKIT_AGENT_ID=x)" workit check test',
+  "env --bogus-opt workit check test",
+  "env -Q workit check test",
+  "unset $V; workit check test",
+  "export $V=x; workit check test",
 ];
 
 test.each(REFUSED)("`%s` is denied for a subagent and for the lead", (command) => {
@@ -88,8 +104,19 @@ test.each([
   ["env | grep WORKIT_"],
   ["env -u CLAUDE_CODE_SUBAGENT_MODEL bun test x.test.ts"],
   ["env -i ls src"],
+  ["env -C src ls"],
+  ["env -C /home/me/src/workit FOO=$BAR bun test"],
+  ["env -u CLAUDECODE claude -p x"],
+  ["env FOO=$BAR bun test"],
+  ["env --bogus-opt ls"],
+  ["unset $V; ls"],
+  ["echo workit-notes; env $X ls"],
 ])("`%s` runs: it reads or names an identity variable without changing it", (command) => {
   expect(identityDenied(shellPre(command, "v1"))).toBe(false);
+});
+
+test("Given the documented limit (a guard against careless changes, not a sandbox), When `read` sets an identity variable, Then the guard does not read it", () => {
+  expect(identityDenied(shellPre('read WORKIT_HOST <<< ""; workit check test', "v1"))).toBe(false);
 });
 
 test("Codex is judged like Claude Code; Cursor and OpenCode stamp no agent, so their hooks leave identity variables alone (Cursor's context names the id to prefix)", () => {
@@ -131,6 +158,8 @@ test("Given Claude Code's launcher, When the lead's command changes an identity 
     "env -i workit check test",
     "env - workit check test",
     'WORKIT_"HOST"= workit check test',
+    "env -C . -u WORKIT_HOST workit check test",
+    "env --bogus-opt workit check test",
   ])
     expect(reached(command), command).toBe(true);
   expect(reached("workit check test")).toBe(false);

@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- a Claude Code or Codex subagent's `workit check` runs now carry its own agent id, so a verifier's verdict is held to its own check runs and a lead's verdict no longer counts its subagents' runs; OpenCode and Pi children are held to the runs their own session made.
+- a Claude Code or Codex subagent's `workit check` runs now carry its own agent id, so a verifier's verdict is held to its own check runs and a lead's verdict no longer counts its subagents' runs; OpenCode and Pi children are held to the runs their own session made. On Claude Code and Codex the hook also refuses a command that changes Workit's identity variables: a guard against careless changes, not a sandbox.
 
 ## [2.25.4] - 2026-11-26
 

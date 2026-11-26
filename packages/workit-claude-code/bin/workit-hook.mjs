@@ -175,6 +175,8 @@ const WORKIT_DELIVERY =
 const WORKIT_CALL = /(?:^|[\s;&|(])(?:\S*[\\/])?workit(?:\s|$)/;
 // A command that may set, unset or clear an identity variable goes to the
 // runtime's identity guard (hooks/identity-env.ts, #883): `NAME=`, `env -u`, `env -i`.
+// A `workit` call beside env or a declare builtin: the guard reads their arguments.
+const ENV_BUILTIN = /\b(?:env|unset|export|declare|typeset|local|readonly)\b/;
 const IDENTITY_ENV =
   /WORKIT_(?:AGENT_ID|HOST|SESSION_ID|SESSION_TOKEN)|\benv\b[^\n;&|]*\s(?:-[a-z]*i|--ignore-environment|-)(?:\s|$)/;
 // A lead's `workit` call goes too while a subagent's stamp waits to be claimed
@@ -778,6 +780,7 @@ const fastAllow = (() => {
         WORKIT_DELIVERY.test(command) ||
         (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
         IDENTITY_ENV.test(command.replace(/['"\\]/g, "")) ||
+        (WORKIT_CALL.test(command) && ENV_BUILTIN.test(command)) ||
         WORKIT_REORDER.test(command) ||
         WORKIT_APPROVE.test(command) ||
         WORKIT_INLINE_ASK.test(command) ||
