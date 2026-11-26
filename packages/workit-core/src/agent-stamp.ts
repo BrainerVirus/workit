@@ -1,5 +1,5 @@
-// A subagent's own id on its `workit` calls (#883). Claude Code and Codex put
-// no subagent id in a subagent's shell: it inherits the lead's session, so its
+// A subagent's own id on its `workit` calls (#883). Claude Code puts no
+// subagent id in a subagent's shell: it inherits the lead's session, so its
 // check rows read as the lead's. A hook cannot add one either: Claude Code
 // matches allow rules against a rewritten command (a `WORKIT_AGENT_ID=<a>`
 // prefix loses every `Bash(workit <verb> *)` rule) and auto mode refuses a
@@ -8,17 +8,26 @@
 // `<state>/agent-stamps/<session hash>/<argv hash>.<agent id or empty>.<nonce>`,
 // written for the lead's calls too. The CLI claims the stamp its own session
 // and argv name and acts with that WORKIT_AGENT_ID; its check row records
-// `agentFrom: "stamp"` (#972). No stamp, a stale one or two callers with one
+// `agentFrom: "stamp"` (#972). A Codex subagent's shell carries its own thread
+// in CODEX_THREAD_ID (codex-cli 0.171), so each thread is its own session: the
+// hook files the stamp under the calling thread (the payload's agent_id, else
+// session_id) with an empty agent part, and the row's session is that thread (#994). No stamp, a stale one or two callers with one
 // argv (ambiguous) leave the id unset and the row `agentFrom: "none"`: on a
 // stamping host (host-session.ts STAMPING_HOSTS) a verdict is held only to stamped rows, so
 // such a run is nobody's, never another agent's. Every failure is silent.
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { stateDir } from "./core/workit-paths.mjs";
 import { hostSessionFromEnv, realHostSession } from "./host-session";
 import { unwrapped } from "./hooks/delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./hooks/shell-words";
+import {
+  backgrounds,
+  callTag,
+  dropCallStamps,
+  stampDir,
+  stampHash as hash,
+} from "./hooks/stamp-hint";
 
 /**
  * Where a check row's agent id came from (#972): a claimed stamp, the caller's
@@ -30,10 +39,6 @@ export type AgentFrom = "stamp" | "env" | "none";
 const STAMP_TTL_MS = 120_000;
 /** A host agent id Workit stamps: shell- and file-name-safe. */
 const AGENT_ID = /^[\w-]{1,64}$/u;
-
-const hash = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 32);
-const stampDir = (env: NodeJS.ProcessEnv, session: string): string =>
-  path.join(stateDir(env), "agent-stamps", hash(session));
 
 /** The argv of each plain `workit …` call in `command`; a call with a word the shell expands is skipped. */
 export const workitCalls = (command: string, dialect: ShellDialect = "posix"): string[][] => {
@@ -82,9 +87,6 @@ export const noteAgentStamps = (
   }
 };
 
-/** The tool call a stamp belongs to, in its file name (the Claude Code launcher holds a copy). */
-const callTag = (toolUseId: string): string => hash(toolUseId).slice(0, 8);
-
 /**
  * Post-tool: the stamps a finished call left unclaimed (a `workit` in a branch
  * that did not run) go, so they cannot make a later call of that argv
@@ -96,21 +98,8 @@ export const dropAgentStamps = (
   toolUseId: string | null,
   command: string,
 ): void => {
-  if (
-    !session ||
-    !toolUseId ||
-    !command.includes("workit") ||
-    /(?:^|[^&<>])&(?![&>])/u.test(command)
-  )
-    return;
-  try {
-    const dir = stampDir(env, session);
-    const tag = `.${callTag(toolUseId)}-`;
-    for (const name of fs.readdirSync(dir))
-      if (name.includes(tag)) fs.rmSync(path.join(dir, name), { force: true });
-  } catch {
-    // No stamp dir: nothing to drop.
-  }
+  if (session && toolUseId && command.includes("workit") && !backgrounds(command))
+    dropCallStamps(env, session, toolUseId);
 };
 
 /**

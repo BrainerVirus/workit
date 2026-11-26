@@ -19,7 +19,7 @@ import {
   type HookInput,
 } from "@/packages/workit-core/src/hooks/index";
 import type { HostDescriptor } from "@/packages/workit-core/src/hooks/descriptor";
-import { readLedger } from "@/packages/workit-core/src/ledger";
+import { readLedger, recordVerdict } from "@/packages/workit-core/src/ledger";
 
 const BUN = process.execPath;
 const MAIN = path.resolve(import.meta.dir, "../../packages/workit-cli/src/main.ts");
@@ -134,15 +134,13 @@ test("Given a stamp older than its lifetime, Then it is not claimed", () => {
 });
 
 test.each([
-  ["Codex", CODEX_DESCRIPTOR, "codex_cli", "a1"],
-  ["Cursor (no subagent id on tool hooks)", CURSOR_DESCRIPTOR, "cursor", null],
-  ["OpenCode (the child's shell carries its own session)", OPENCODE_DESCRIPTOR, "opencode", null],
-] as const)("%s", (_name, descriptor, host, expected) => {
+  ["Codex (filed under the subagent's own thread)", CODEX_DESCRIPTOR, "codex_cli"],
+  ["Cursor (no subagent id on tool hooks)", CURSOR_DESCRIPTOR, "cursor"],
+  ["OpenCode (the child's shell carries its own session)", OPENCODE_DESCRIPTOR, "opencode"],
+] as const)("%s: the lead's session claims no subagent stamp", (_name, descriptor, host) => {
   const session = newSession();
   shellPre("workit check lint", { session, agent: "a1" }, descriptor, host);
-  expect(claim(session, ["check", "lint"])).toEqual(
-    expected === null ? null : { agentId: expected },
-  );
+  expect(claim(session, ["check", "lint"])).toBeNull();
 });
 
 test("Given a subagent's stamped `workit check`, When the CLI runs it, Then its check row carries the agent id and the lead's next run carries none", () => {
@@ -353,12 +351,172 @@ test("Given no subagent stamp pending, When the lead's `workit` call passes Clau
   expect(pre.stderr).not.toContain("hook unavailable");
 });
 
-const shellPost = (command: string, session: string, toolUseId: string) =>
+// #994: a Codex subagent's shell carries its own thread in CODEX_THREAD_ID, and
+// its hook payload carries that thread as agent_id beside the lead's session_id.
+// Each thread is its own session: the hook files a call's stamp under the
+// calling thread with no agent id, and the CLI claims it under CODEX_THREAD_ID.
+
+const codexPre = (
+  command: string,
+  who: { session: string; agent?: string | null },
+  cwd = repo(),
+  toolUseId: string | null = null,
+) =>
+  handleHook(
+    {
+      host: "codex_cli",
+      cwd,
+      session: {
+        id: who.session,
+        agentId: who.agent ?? null,
+        agentType: who.agent ? "default" : null,
+        parentId: who.agent ? who.session : null,
+      },
+      permissionMode: "default",
+      transcriptPath: null,
+      event: { kind: "shell.pre", command, toolUseId, toolInput: { command } },
+    },
+    { descriptor: CODEX_DESCRIPTOR, addendum: null },
+  );
+/** A Codex shell's env: only its own thread names the session. */
+const codexEnv = (thread: string): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    CODEX_THREAD_ID: thread,
+    WORKIT_WORKSPACE_ROOT: "",
+    WORKIT_LEASE: "",
+  };
+  for (const name of [
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "WORKIT_SESSION_ID",
+    "WORKIT_HOST",
+    "WORKIT_AGENT_ID",
+    "OPENCODE_SESSION_ID",
+    "PI_SESSION_ID",
+  ])
+    delete env[name];
+  return env;
+};
+const codexClaim = (thread: string, argv: string[]) => claimAgentStamp(codexEnv(thread), argv);
+const LINT = ["check", "lint"];
+
+test("Given a Codex subagent's `workit check`, When the hook passes it, Then its own thread claims it with no agent id and the lead's thread claims nothing", () => {
+  const lead = newSession();
+  const thread = newSession();
+  codexPre("workit check lint", { session: lead, agent: thread });
+  expect(codexClaim(lead, LINT)).toBeNull();
+  expect(codexClaim(thread, LINT)).toEqual({ agentId: null });
+  expect(codexClaim(thread, LINT)).toBeNull();
+});
+
+test("Given a Codex lead's `workit check`, Then the lead's thread claims it with no agent id and a subagent's thread does not", () => {
+  const lead = newSession();
+  codexPre("workit check lint", { session: lead });
+  expect(codexClaim(newSession(), LINT)).toBeNull();
+  expect(codexClaim(lead, LINT)).toEqual({ agentId: null });
+});
+
+test("Given a Codex lead and subagent run one argv at once, Then each thread claims its own stamp (no ambiguity)", () => {
+  const lead = newSession();
+  const thread = newSession();
+  codexPre("workit check lint", { session: lead, agent: thread });
+  codexPre("workit check lint", { session: lead });
+  expect(codexClaim(thread, LINT)).toEqual({ agentId: null });
+  expect(codexClaim(lead, LINT)).toEqual({ agentId: null });
+});
+
+/** A feature branch off main whose configured check `ok` passes. */
+const featureCheckRepo = () => {
+  const root = temp("workit-stamp-feature-");
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "test@example.invalid");
+  git(root, "config", "user.name", "Workit Test");
+  git(root, "config", "commit.gpgsign", "false");
+  mkdirSync(path.join(root, ".workit"));
+  writeFileSync(
+    path.join(root, ".workit", "checks.json"),
+    JSON.stringify({ checks: { ok: [BUN, "-e", "0"] } }),
+  );
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "init");
+  git(root, "checkout", "-qb", "feature/x");
+  mkdirSync(path.join(root, "src"));
+  writeFileSync(path.join(root, "src", "app.ts"), "export const answer = 1;\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "feature work");
+  return root;
+};
+/** Each check row as [session, agent id, where the agent id came from]. */
+const rowsOf = (root: string) => {
+  const ledger = readLedger(root);
+  if (!ledger.ok) throw new Error(ledger.error);
+  return ledger.value.rows
+    .filter((row) => row.type === "check")
+    .map((row) => [row.actor.session, row.actor.agentId ?? null, row.agentFrom]);
+};
+/** One Codex `workit check ok`: the hook sees the thread's call, then the CLI runs in its shell. */
+const codexCheck = (root: string, who: { session: string; agent?: string | null }) => {
+  codexPre(`workit check --json --cwd '${root}' ok`, who, root);
+  const run = spawnCheck(root, codexEnv(who.agent ?? who.session));
+  expect(run.status, run.stderr).toBe(0);
+};
+const codexVerdict = (root: string, thread: string) =>
+  recordVerdict(
+    { cwd: root, actor: { host: "codex_cli", session: thread, agentId: null } },
+    { result: "verified", how: "ran the checks" },
+  );
+const headOf = (root: string) => git(root, "rev-parse", "HEAD").stdout.trim();
+
+test("Given a Codex lead and subagent each run a check through the CLI, Then each row is stamp-bound to its own thread with no agent id", () => {
+  const root = featureCheckRepo();
+  const lead = newSession();
+  const thread = newSession();
+  codexCheck(root, { session: lead, agent: thread });
+  codexCheck(root, { session: lead });
+  expect(rowsOf(root)).toEqual([
+    [thread, null, "stamp"],
+    [lead, null, "stamp"],
+  ]);
+});
+
+test("Given Codex threads' checks on one head and a code change since, Then each thread's verdict is held to and cleared by only its own runs", () => {
+  const root = featureCheckRepo();
+  const lead = newSession();
+  const thread = newSession();
+  const tested = headOf(root);
+  codexCheck(root, { session: lead, agent: thread });
+  codexCheck(root, { session: lead });
+  writeFileSync(path.join(root, "src", "app.ts"), "export const answer = 2;\n");
+  git(root, "commit", "-qam", "code change");
+  const moved = headOf(root);
+  const held = codexVerdict(root, thread);
+  expect(held.ok ? "recorded" : held.error).toContain("head_moved");
+  expect(held.ok ? "" : held.error).toContain(tested.slice(0, 12));
+  // The subagent's fresh run clears its own verdict; the lead's stale run does not hold it.
+  codexCheck(root, { session: lead, agent: thread });
+  const recorded = codexVerdict(root, thread);
+  expect(recorded.ok ? recorded.value.head : recorded.error).toBe(moved);
+  // The subagent's fresh run does not clear the lead's.
+  const forLead = codexVerdict(root, lead);
+  expect(forLead.ok ? "recorded" : forLead.error).toContain("head_moved");
+});
+
+test("Given a Codex subagent shell that forges the lead's CODEX_THREAD_ID, When no lead stamp waits, Then its row is bound to no agent", () => {
+  const root = featureCheckRepo();
+  const lead = newSession();
+  codexPre(`workit check --json --cwd '${root}' ok`, { session: lead, agent: newSession() }, root);
+  expect(spawnCheck(root, codexEnv(lead)).status).toBe(0);
+  expect(rowsOf(root)).toEqual([[lead, null, "none"]]);
+});
+
+/** A Codex subagent's post-tool hook: the lead's thread as session, its own thread as agent id. */
+const shellPost = (command: string, lead: string, thread: string, toolUseId: string) =>
   handleHook(
     {
       host: "codex_cli",
       cwd: repo(),
-      session: { id: session, agentId: "a1", agentType: null, parentId: session },
+      session: { id: lead, agentId: thread, agentType: "default", parentId: lead },
       permissionMode: "default",
       transcriptPath: null,
       event: { kind: "shell.post", command, stdout: "", exitCode: 0, toolUseId },
@@ -368,20 +526,24 @@ const shellPost = (command: string, session: string, toolUseId: string) =>
 const note = (session: string, command: string, toolUseId: string) =>
   noteAgentStamps(process.env, session, "a1", command, { toolUseId });
 
-test("Given a finished call whose `workit` never ran, When its post-tool hook fires, Then its unclaimed stamp goes and another call's stays", () => {
-  const session = newSession();
-  note(session, "false && workit check lint", "toolu_done");
-  note(session, "workit check test", "toolu_other");
-  shellPost("false && workit check lint", session, "toolu_done");
-  expect(claim(session, ["check", "lint"])).toBeNull();
-  expect(claim(session, ["check", "test"])).toEqual({ agentId: "a1" });
+test("Given a Codex subagent's finished call whose `workit` never ran, When its post-tool hook fires, Then its unclaimed stamp under its own thread goes and another call's stays", () => {
+  const lead = newSession();
+  const thread = newSession();
+  const who = { session: lead, agent: thread };
+  codexPre("false && workit check lint", who, repo(), "toolu_done");
+  codexPre("workit check test", who, repo(), "toolu_other");
+  shellPost("false && workit check lint", lead, thread, "toolu_done");
+  expect(codexClaim(thread, ["check", "lint"])).toBeNull();
+  expect(codexClaim(thread, ["check", "test"])).toEqual({ agentId: null });
 });
 
-test("Given a call that backgrounds its `workit` with `&`, When its post-tool hook fires, Then the stamp stays for the call to claim", () => {
-  const session = newSession();
-  note(session, "workit check lint > out.txt 2>&1 &", "toolu_bg");
-  shellPost("workit check lint > out.txt 2>&1 &", session, "toolu_bg");
-  expect(claim(session, ["check", "lint"])).toEqual({ agentId: "a1" });
+test("Given a Codex subagent's call that backgrounds its `workit` with `&`, When its post-tool hook fires, Then the stamp stays for the call to claim", () => {
+  const lead = newSession();
+  const thread = newSession();
+  const command = "workit check lint > out.txt 2>&1 &";
+  codexPre(command, { session: lead, agent: thread }, repo(), "toolu_bg");
+  shellPost(command, lead, thread, "toolu_bg");
+  expect(codexClaim(thread, ["check", "lint"])).toEqual({ agentId: null });
 });
 
 test("Given Claude Code's launcher, When PostToolUse reports a finished `workit` call, Then it drops that call's stamp on its fast path; a run_in_background call keeps it", () => {

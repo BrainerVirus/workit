@@ -2,8 +2,12 @@
 // runs it for every tool call and, after every shell call, PostToolUse. Most
 // of those calls cannot matter to Workit, so they answer before the Workit
 // runtime (a ~1 MB module graph) loads:
-//   - PostToolUse: only a raw `git commit` is recorded;
-//   - PreToolUse: only a file edit (apply_patch, for the before-write gate),
+//   - PostToolUse: only a raw `git commit` is recorded; a finished `workit`
+//     call's unclaimed agent stamps are dropped here (core hooks/stamp-hint.ts);
+//   - PreToolUse: only a plain `workit` call (its agent stamp, filed under the
+//     calling thread, #994), a command that may change an identity or state
+//     variable (the identity guard; both pre-checks in core hooks/stamp-hint.ts),
+//     a file edit (apply_patch, for the before-write gate),
 //     a shell command that names git, gh, glab, a state registry or the
 //     config file, runs a script (a shell, an interpreter, `.` or a path),
 //     writes with a task store (a writer verb or a file redirect, for the
@@ -82,6 +86,8 @@ const { recordHookRun } = await import("@workit-dev/core/src/hooks/hook-runs");
 const { observeHookBudget } = await import("@workit-dev/core/src/hooks/budget-signal");
 const { hasTaskStore, mayReach } = await import("@workit-dev/core/src/hooks/write-reach");
 const { mayHitHookGuard } = await import("@workit-dev/core/src/hooks/hook-entry-hint");
+const { dropPostToolStamps, mayChangeIdentity, mayRunWorkit } =
+  await import("@workit-dev/core/src/hooks/stamp-hint");
 /** `ytrack` where a command name can end, in any position: a copy of core hooks/ytrack-word.ts. */
 const YTRACK_WORD = /ytrack(?![\w/-]|\.(?!exe|cmd))/i;
 const namesYtrack = (text: string): boolean => {
@@ -116,7 +122,7 @@ const guarded = (text: string): boolean => {
   // As written, and with quotes and backslashes gone (`work""spaces.json`).
   return [flat(text), text.replace(/['"\\]/g, "").toLowerCase()].some(
     (all) =>
-      /issued|approvals|workspaces\.json|\.config\/workit|state\/workit/.test(all) ||
+      /issued|approvals|agent-stamps|workspaces\.json|\.config\/workit|state\/workit/.test(all) ||
       [stateDir, configDir].some((dir) => all.includes(flat(dir(process.env)))),
   );
 };
@@ -169,6 +175,9 @@ const quietEvent = (): string | null => {
     if (!shell) return event;
     if (!text.trim()) return null;
     if (event === "PostToolUse") return /\bcommit\b/.test(text) ? null : event;
+    // Every plain `workit` call, the lead's too: each thread is its own session,
+    // so its stamp never makes another thread's call ambiguous (#994).
+    if (mayRunWorkit(text) || mayChangeIdentity(text)) return null;
     // A writer verb or a file redirect (the Claude Code launcher's list); an fd
     // duplication (`2>&1`, `>&2`) or a device (`>/dev/null`) writes no file.
     const writes =
@@ -197,6 +206,9 @@ const quietEvent = (): string | null => {
     return null;
   }
 };
+
+// PostToolUse: a finished `workit` call's unclaimed stamps go (#994).
+dropPostToolStamps(process.env, payload);
 
 const quiet = observeHookBudget(payload) ? null : quietEvent();
 if (quiet) {

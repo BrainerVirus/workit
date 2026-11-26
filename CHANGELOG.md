@@ -14,11 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- on Codex, a subagent's and a lead's workit check runs are each bound to their own thread (CODEX_THREAD_ID), so a verdict is held to and cleared by only its own thread's runs, and the Codex hooks now deny a command that changes an identity or state variable around a workit call (#994).
+
 ## [2.27.9] - 2026-11-26
 
 ### Fixed
 
-- a workit call run with another WORKIT_STATE_DIR, XDG_STATE_HOME or HOME can no longer forge an issued session's bound verdict: the hooks deny such a call on every host, and each checkout reads its issued-session registry from the state dir its host's hooks pinned (#980).
+- a workit call run with another WORKIT_STATE_DIR, XDG_STATE_HOME or HOME can no longer forge an issued session's bound verdict: the hooks deny such a call on every host, and each checkout reads its issued-session registry from the state dir its host's hooks pinned (#983).
 
 ## [2.27.8] - 2026-11-26
 
