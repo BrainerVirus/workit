@@ -14,14 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- two Workit processes moving an old folder store at once can no longer both take over its stale lock; one mover wins and a fresh lock is never removed (#892).
-- Outside a git repository Workit keeps a folder's ledger, tasks, plans, retros, handoffs and notes in its state dir (<state>/folders/<folder>-<hash>), never in <folder>/.workit; an older .workit there moves once with a one-line note (team config stays), and workit doctor row stray_workit lists any left in the cwd or its parents (#892).
-
 ### Added
 
 - `workit doctor` warns (`changelog_released`) with the count of [Unreleased] entries a release tag already shipped and the oldest release, and names `workit changelog roll`; it says nothing without release tags, in a shallow clone or without a changelog. `workit changelog release --notes-format github` puts the notes between `<!-- workit:changelog <tag> -->` markers, cut at 24,000 characters with a compare link; `workit release notes edit --from-changelog` replaces an older `workit:changelog:start` block so a body keeps one; the changelog is written through a temp file and a rename (mode and CRLF kept), a missing [Unreleased] section is reported as missing, and glob characters in `--tag-prefix` are matched literally (#889).
+
+## [2.22.3] - 2026-11-25
+
+### Fixed
+
+- two Workit processes moving an old folder store at once can no longer both take over its stale lock; one mover wins and a fresh lock is never removed (#892).
+
+## [2.22.2] - 2026-11-25
+
+### Fixed
+
+- Outside a git repository Workit keeps a folder's ledger, tasks, plans, retros, handoffs and notes in its state dir (<state>/folders/<folder>-<hash>), never in <folder>/.workit; an older .workit there moves once with a one-line note (team config stays), and workit doctor row stray_workit lists any left in the cwd or its parents (#892).
 
 ## [2.22.1] - 2026-11-25
 
@@ -1911,7 +1918,9 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.1...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.3...HEAD
+[2.22.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.2...workit-dev-v2.22.3
+[2.22.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.1...workit-dev-v2.22.2
 [2.22.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.0...workit-dev-v2.22.1
 [2.22.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.10...workit-dev-v2.22.0
 [2.21.10]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.9...workit-dev-v2.21.10
