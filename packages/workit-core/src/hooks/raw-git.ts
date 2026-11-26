@@ -274,9 +274,9 @@ const literalOutput = (segment: Segment | undefined): string | undefined => {
 const stdinOf = (segment: Segment, previous: Segment | undefined): string | undefined =>
   segment.stdin ? segment.stdin.join("\n") : literalOutput(previous);
 
-/** xargs options that take a value (`-n 1`, `-d '\n'`). */
+/** xargs options that take a value (`-n 1`, `-d '\n'`, BSD's `-R 2`). */
 const XARGS_VALUES = new Set(
-  ["-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "--arg-file", "--delimiter"].concat([
+  ["-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "-R", "--arg-file", "--delimiter"].concat([
     "--max-args",
     "--max-lines",
     "--max-procs",
@@ -287,12 +287,14 @@ const XARGS_VALUES = new Set(
 );
 
 /**
- * The commands `xargs …` runs: its command with the input appended, or
- * with `-I R` replaced per input line. Input that is not spelled out on
+ * The commands `xargs …` runs: its command with the input appended, with
+ * `-I R` replaced per input line, or with BSD's `-J R` word replaced by
+ * every input word at once. Input that is not spelled out on
  * the command line adds nothing, like a `$VAR` name it stays unjudged.
  */
 export const xargsCommands = (words: string[], input: string | undefined): string[][] => {
   let replace: string | null = null;
+  let insert: string | null = null;
   let index = 1;
   for (; index < words.length; index++) {
     const word = words[index];
@@ -302,6 +304,8 @@ export const xargsCommands = (words: string[], input: string | undefined): strin
     }
     if (!word.startsWith("-")) break;
     if (word === "-I") replace = words[++index] ?? "{}";
+    else if (word === "-J") insert = words[++index] ?? null;
+    else if (/^-J./.test(word)) insert = word.slice(2);
     else if (word === "--replace" || word === "-i") replace = "{}";
     else if (word.startsWith("--replace=")) replace = word.slice("--replace=".length);
     else if (/^-[Ii]./.test(word)) replace = word.slice(2);
@@ -310,7 +314,11 @@ export const xargsCommands = (words: string[], input: string | undefined): strin
   const command = words.slice(index);
   if (command.length === 0) return [];
   if (input === undefined) return [command];
-  if (replace === null) return [[...command, ...input.split(/\s+/).filter(Boolean)]];
+  const fed = input.split(/\s+/).filter(Boolean);
+  // BSD `-J R`: the first word that is exactly R takes every input word; none, they are appended.
+  const at = insert === null ? -1 : command.indexOf(insert);
+  if (at >= 0) return [[...command.slice(0, at), ...fed, ...command.slice(at + 1)]];
+  if (replace === null) return [[...command, ...fed]];
   const token = replace;
   return input
     .split("\n")
