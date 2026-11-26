@@ -87,6 +87,7 @@ test.each([
   ["printenv WORKIT_SESSION_ID"],
   ["env | grep WORKIT_"],
   ["env -u CLAUDE_CODE_SUBAGENT_MODEL bun test x.test.ts"],
+  ["env -i ls src"],
 ])("`%s` runs: it reads or names an identity variable without changing it", (command) => {
   expect(identityDenied(shellPre(command, "v1"))).toBe(false);
 });

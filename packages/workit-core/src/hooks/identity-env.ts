@@ -42,6 +42,7 @@ export const identityEnvChange = (
   command: string,
   dialect: ShellDialect = "posix",
   depth = 0,
+  runsWorkit = command.includes("workit"),
 ): string | null => {
   if (!/WORKIT_|\benv\b/u.test(command)) return null;
   if (dialect === "powershell") return POWERSHELL.exec(command)?.[0] ?? null;
@@ -65,10 +66,11 @@ export const identityEnvChange = (
     for (let index = at; index < words.length; index += 1)
       if (base(words[index]) === "env") {
         const hit = envChange(words, index + 1);
-        if (hit) return hit;
+        // A cleared environment matters only to a workit call it runs (`env -i ls` reads).
+        if (hit && (hit !== "env -i" || runsWorkit)) return hit;
       }
     const script = depth < 4 ? shellScript(words) : null;
-    const nested = script ? identityEnvChange(script, dialect, depth + 1) : null;
+    const nested = script ? identityEnvChange(script, dialect, depth + 1, runsWorkit) : null;
     if (nested) return nested;
   }
   return null;

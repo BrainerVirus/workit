@@ -295,12 +295,6 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       const skillRead = skillReadIn(event.command, event.dialect);
       if (skillRead) recordSkillLoad(input, skillRead, "read");
       const canDeny = usable(descriptor.shellPolicy.deny);
-      // Where hooks stamp the agent (#883), the identity variables are the host's.
-      const identity =
-        canDeny && stampsAgents(descriptor)
-          ? identityEnvChange(event.command, event.dialect)
-          : null;
-      if (identity) return { kind: "deny", reason: identityEnvDeny(identity), unblock: null };
       const policy = canDeny ? shellPolicy(input.cwd, event.command, event.dialect) : NONE;
       if (policy.kind !== "none") return policy;
       // A raw `ytrack` write asks the user first (#780); Claude Code asks natively.
@@ -377,6 +371,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         ? shellGate(input.cwd, event.command, owner, event.dialect)
         : NONE;
       if (gate.kind === "deny") return gate;
+      // Where hooks stamp the agent (#883), the identity variables are the host's.
+      const identity =
+        canDeny && stampsAgents(descriptor)
+          ? identityEnvChange(event.command, event.dialect)
+          : null;
+      if (identity) return { kind: "deny", reason: identityEnvDeny(identity), unblock: null };
       // A heavy command runs under the machine lease: rewritten where the
       // host can replace the command, else denied with the exact rewrite.
       // Every gate above passed on the original command (ruling mvid5onk).
