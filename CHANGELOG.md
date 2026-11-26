@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `workit changelog apply` and `workit pr create --changelog` now move [Unreleased] entries a release tag already shipped into their release sections before adding the new entry, in the same commit; the output says how many moved.
+- hooks load about 9 KB less: the workspaces.json editor descriptions now live only in the CLI's schema generator
 
 ## [2.25.4] - 2026-11-26
 
