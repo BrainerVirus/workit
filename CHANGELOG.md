@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- under a judge's or an implementer's confinement, a pwsh or powershell -File script (and pwsh x.ps1), an -EncodedCommand (-enc, -e), iex or Invoke-Expression inside a -Command script, a cmd /c link or write target spelled with a %VAR% or !VAR! variable, and an xargs or parallel command whose name stdin fills in (xargs -I{} {} f) count as a write in the directory they run in; pwsh -c Get-ChildItem, cmd /c dir and xargs cat still run (#880).
+
 ## [2.25.4] - 2026-11-26
 
 ### Fixed
