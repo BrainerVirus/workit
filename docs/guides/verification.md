@@ -519,7 +519,8 @@ A verifier never names its own session. Each host gives it one:
 
 | Host | Verifier session |
 | --- | --- |
-| Claude Code, Codex | `<lead>:<agent id>` and a token from the SubagentStart hook (`workit:verifier`, `workit:reviewer`; Codex `workit-verifier`, `workit-reviewer`), passed exactly as `--session` and `--token`; any other Codex verifier passes `--as verifier` |
+| Claude Code | `<lead>:<agent id>` and a token from the SubagentStart hook (`workit:verifier`, `workit:reviewer`), passed exactly as `--session` and `--token` |
+| Codex | a subagent's shell carries its own thread id in `CODEX_THREAD_ID` (measured, codex-cli 0.171), so it acts as that session: its verdict line has no `--session` or `--token`, nothing is issued, and `<lead>:<agent id>` is refused (`forged_session`) |
 | OpenCode | a child session's shell already has `WORKIT_SESSION_ID=<lead>:<child>` (plugin `shell.hook("create.before")`); its `OPENCODE_SESSION_ID` is the child's own id |
 | Pi | a supervised worker's shell already has `WORKIT_SESSION_ID=<lead>:<worker session>`; its `PI_SESSION_ID` is the worker's own id |
 | Cursor, CI, a plain terminal | declared: `WORKIT_SESSION_ID=<lead>:verifier-<random hex>` (Cursor's hook cannot reach a subagent) |
@@ -533,8 +534,8 @@ one of these:
   `WORKIT_HOST=claude_code`;
 - `<lead>:<this session>`, a child naming its own host session (only where the
   host sets the variable);
-- `<lead>:<agent id>` that this lead's SubagentStart hook issued (Claude Code,
-  Codex). The hook records each id it issues per lead in the user's Workit
+- `<lead>:<agent id>` that this lead's SubagentStart hook issued (Claude Code;
+  a Codex subagent acts as its own thread and is issued nothing). The hook records each id it issues per lead in the user's Workit
   state dir (`issued/`, the newest 64 per lead), so a verifier can record its
   verdict from any repository the lead delegated to, and a `<lead>:v1` the lead made up
   is refused. The same holds for a declared `WORKIT_SESSION_ID=<lead>:<x>`
@@ -635,11 +636,11 @@ Limits (the check stops casual forgery, not a determined one; see
   variable, makes a plain terminal, where any id is declared.
 - Cursor, CI and a plain terminal are declared by design; Cursor's hook
   cannot reach a subagent, so it issues no ids or tokens.
-- Claude Code, Codex: the issued-id record is plain files in the user's state
+- Claude Code: the issued-id record is plain files in the user's state
   dir. A caller that writes there deliberately can mark any id as issued or
   plant a token hash it chose. The token itself sits in the subagent's
   transcript, which a caller that reads the host's transcript files can find.
-- Claude Code, Codex: anyone who can run the hook bundle can mint a new id
+- Claude Code: anyone who can run the hook bundle can mint a new id
   and its token (a SubagentStart with an agent id never used), and record an
   independent verdict under it. Issue-once only stops re-minting an id that
   already exists.
