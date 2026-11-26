@@ -465,8 +465,8 @@ voided, with the same result and session, by a host-issued `<lead>:<agent>`
 session (a real host, never `cli` or `--as`, and a `--session` one only with
 its token) that authored neither branch, on a range whose set hash is the
 row's. Its 7 days run from that ledger verdict. Both the store
-(`<state>/verdicts/`) and every repository ledger
-(`<git common dir>/workit/ledger/`) are guarded paths: an agent's Edit,
+(`<state>/verdicts/`) and every ledger (`<git common dir>/workit/ledger/`,
+or `<state>/folders/<slug>/ledger/` outside git) are guarded paths: an agent's Edit,
 Write or shell write to them is denied (the ledger guard).
 
 `workit ledger void <id>` of a verdict shared with `--set` also retires the
