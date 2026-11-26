@@ -36,6 +36,7 @@ import {
   cmdScript,
   inWorkitWorkspace,
   parallelCommands,
+  powershellOpaque,
   powershellScript,
   rawInvocations,
   xargsCommands,
@@ -216,11 +217,18 @@ const editsOf = (input: string[]): string[] | null => {
     case "cp":
     case "ln":
     case "install": {
-      // `-t D`, `-tD`, `--target-directory[=]D`.
-      const into = valueOf(args, /^(?:-t|--target-directory=?)(.*)$/s);
+      // `-t D`, `-tD`, `-st D`, `--target-directory[=]D`.
+      const into = valueOf(args, /^(?:-[a-zA-Z]*t|--target-directory=?)(.*)$/s);
       if (into !== undefined) return [into];
-      const last = operands(args).at(-1);
-      return last ? [last] : null;
+      const files = operands(args);
+      // `ln -s /a/b` makes the link `b` here.
+      if (name === "ln" && files.length === 1) return [path.basename(files[0])];
+      return files.length ? [files.at(-1) as string] : null;
+    }
+    // `mklink [/D|/H|/J] <link> <target>`: the link is the write.
+    case "mklink": {
+      const link = args.find((arg) => !/^\/[dhj]$/i.test(arg));
+      return link ? [link] : null;
     }
     case "dd":
       return args.filter((item) => item.startsWith("of=")).map((item) => item.slice(3));
@@ -247,11 +255,22 @@ const editsOf = (input: string[]): string[] | null => {
     case "del":
     case "copy-item":
     case "move-item": {
-      const flag = args.findIndex((item) =>
-        /^-(?:path|filepath|literalpath|destination)$/i.test(item),
+      // `-Path x`, `-Path:x`; a positional skips the values of `-ItemType`, `-Value`, `-Target`….
+      const named = valueOf(args, /^-(?:path|filepath|literalpath|destination)(?::(.+))?$/is);
+      if (
+        named !== undefined ||
+        args.some((item) => /^-(?:path|filepath|literalpath|destination)$/i.test(item))
+      )
+        return named ? [named] : null;
+      const files = args.filter(
+        (item, at) =>
+          !item.startsWith("-") &&
+          !/^-(?:itemtype|type|value|target|encoding|name)$/i.test(args[at - 1] ?? ""),
       );
-      if (flag >= 0) return args[flag + 1] ? [args[flag + 1]] : null;
-      const files = operands(args);
+      if (files.length === 0 && (name === "new-item" || name === "ni")) {
+        const leaf = valueOf(args, /^-name(?::(.+))?$/is);
+        if (leaf) return [leaf];
+      }
       if (name === "move-item") return files.length ? files : null;
       const file = name === "copy-item" ? files.at(-1) : files[0];
       return file ? [file] : null;
@@ -726,8 +745,11 @@ const shellScript = (words: readonly string[]): string | null => {
   return null;
 };
 
+/** A cmd variable reference: `%X%`, or `!X!` under delayed expansion. */
+const CMD_VAR = /%[^%\s]+%|![^!\s]+!/;
+
 /** xargs options that take the next word as their value. */
-const XARGS_VALUE = /^-[IinLPdsEa]$/;
+const XARGS_VALUE = /^-[InLPdsEa]$/;
 
 /** The command `xargs` (or `find -exec`) runs with `{}` filled in by a path. */
 const runsWriter = (words: readonly string[]): boolean => {
@@ -757,13 +779,29 @@ const opaqueWrites = (
   const words = pastLead(input);
   if (words[0] === "xargs") {
     let at = 1;
-    while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
-    return runsWriter(words.slice(at)) ? ["."] : null;
+    let token = "{}";
+    for (; words[at]?.startsWith("-"); at += XARGS_VALUE.test(words[at]) ? 2 : 1)
+      token =
+        words[at] === "-I"
+          ? (words[at + 1] ?? token)
+          : (/^-[Ii](.+)|^--replace=(.+)/s.exec(words[at])?.slice(1).join("") ?? token);
+    // A command named by stdin (`echo touch | xargs -I{} {} f`) may be any writer.
+    const named = pastLead(words.slice(at))[0] ?? "";
+    return named.includes(token) || named.includes("{}") || runsWriter(words.slice(at))
+      ? ["."]
+      : null;
   }
   const [verb, ...args] = words;
-  const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
-  // Wrappers whose command Workit does not follow (a lock file first, a remote host, a typescript).
-  if (/^(?:flock|watch|ssh|parallel|script|su|runuser|strace)$/.test(name)) return ["."];
+  const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase().replace(/\.exe$/, "");
+  // Wrappers whose command Workit does not follow (a lock file first, a remote host, a typescript),
+  // and PowerShell code that is not text here: a script file, an encoded command, `iex`.
+  if (
+    /^(?:flock|watch|ssh|parallel|script|su|runuser|strace|iex|invoke-expression)$/.test(name) ||
+    ((name === "pwsh" || name === "powershell") && powershellOpaque(words))
+  )
+    return ["."];
+  // `set X=…&& mklink /J %X% …`: a link whose name or target is a cmd variable.
+  if (name === "mklink" && args.some((arg) => CMD_VAR.test(arg))) return ["."];
   const files = operands(args);
   const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
   const listed = (named: string[]) => (named.length ? named : ["."]);
@@ -1158,7 +1196,7 @@ const pathsIn = (text: string): string[] => [...text.matchAll(PATHS)].map((match
  */
 const linkSources = (args: readonly string[], at: (file: string) => string | null): string[] => {
   const names = operands([...args]);
-  const into = args.indexOf("-t");
+  const into = args.findIndex((arg) => /^-[a-zA-Z]*t$/.test(arg));
   const dest = into >= 0 ? args[into + 1] : names.length > 1 ? names.at(-1) : ".";
   const sources = names.filter((name, index) =>
     into >= 0 ? name !== dest : index < names.length - 1 || names.length === 1,
@@ -2015,8 +2053,11 @@ const segmentTargets = (
         );
     // `cmd /c "cd x && mklink …"`, `pwsh -c "a; b"`: every statement of the script.
     const windows = strict && depth < 4 ? windowsScript(words, segment.stdin?.join("\n")) : null;
+    // A cmd target spelled `%X%` or `!X!` (`set X=…&& mklink /J %X% …`) is a value Workit does not read.
+    const cmd = /^cmd(?:\.exe)?$/.test(commandName(pastLead(words)[0] ?? ""));
     if (windows !== null && dir !== undefined)
-      targets.push(...segmentTargets(dir, windows, "powershell", depth + 1, strict, vars));
+      for (const file of segmentTargets(dir, windows, "powershell", depth + 1, strict, vars))
+        targets.push(cmd && CMD_VAR.test(file) ? placeholderIn(dir, `${OPAQUE_TARGET}cmd`) : file);
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
     const bare = strict && depth < 4 ? unwrapped(words) : null;
     if (bare?.length && dir !== undefined)

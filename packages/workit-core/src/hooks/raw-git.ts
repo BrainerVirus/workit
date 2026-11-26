@@ -368,6 +368,26 @@ export const powershellScript = (words: string[], stdin?: string): string | null
   return null;
 };
 
+/**
+ * Whether `pwsh`/`powershell` runs code a reader cannot see as text: a
+ * `-File` script, `-EncodedCommand` (`-enc`, `-e`, `-ec`), or `pwsh`'s
+ * positional script file. `-Command` and `-CommandWithArgs` are read.
+ */
+export const powershellOpaque = (words: string[]): boolean => {
+  for (let index = 1; index < words.length; index++) {
+    const flag = /^[-/]+(.+)/.exec(words[index])?.[1].toLowerCase();
+    // `pwsh x.ps1` runs a file; Windows PowerShell's positional is a command.
+    if (flag === undefined) return !/powershell/i.test(words[0]);
+    if (flag === "e" || flag === "ec" || (flag.length >= 2 && "encodedcommand".startsWith(flag)))
+      return true;
+    if ("command".startsWith(flag) || flag === "cwa" || flag.startsWith("commandwith"))
+      return false;
+    if (flag === "f" || flag === "file") return true;
+    if (POWERSHELL_VALUES.test(`-${flag}`)) index++;
+  }
+  return false;
+};
+
 /** The script `cmd /c …` (or `/k`) runs. */
 export const cmdScript = (words: string[]): string | null => {
   const at = words.findIndex((word, index) => index > 0 && /^\/[ck]$/i.test(word));
