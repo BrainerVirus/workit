@@ -160,10 +160,10 @@ const HOOK_ENTRIES = [
 // core run plus 2 KiB; whichever of this and #966 merges second reconciles it.
 // #967 residuals (2026-11-26, Bun 1.4.5): more loader names (askpass, cargo and rustc wrappers, the
 // JVM's and .NET's startup options, Bun, npm config, search paths, PROMPT_COMMAND), `pwsh -wd` as a
-// location change and a judge's git behind a non-loader assignment take core run from 576,814 B to
-// 577,548 B (+734 B; Claude Code 570,904 B, Codex 559,227 B, Cursor 558,621 B). The ceiling is core
+// location change, a judge's git behind a non-loader assignment and names in any case take core run from 576,814 B to
+// 577,529 B (+715 B; Claude Code 570,885 B, Codex 559,208 B, Cursor 558,602 B). The ceiling is core
 // run plus 2 KiB; whichever of this and #966 merges second reconciles it.
-const BUDGET = 579_596;
+const BUDGET = 579_577;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
