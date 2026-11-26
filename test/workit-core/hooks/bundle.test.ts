@@ -168,7 +168,11 @@ const HOOK_ENTRIES = [
 // config-schemas.ts (CLI) loads, so they and zod's registry leave every hook bundle. Core run
 // 577,529 B -> 568,160 B (-9,369 B; Claude Code 570,885 -> 561,516, Codex 559,208 -> 549,839,
 // Cursor 558,602 -> 549,233); the ceiling is core run plus 2 KiB.
-const BUDGET = 570_208;
+// agent-id-stamp (#883, 2026-11-26, Bun 1.4.5, rebased on #964 at 5f8e4826): the pre-tool agent
+// stamp for each `workit` call (src/agent-stamp.ts, the CLI claims it), its post-tool cleanup and the
+// stamp registry guard take core run from 567,412 B to 568,970 B (+1,558 B; Claude Code 562,320 B,
+// Codex 550,643 B, Cursor 550,037 B). The ceiling is core run plus 2 KiB.
+const BUDGET = 571_018;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
