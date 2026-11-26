@@ -13,6 +13,8 @@
 // environment, an env change inside a wrapper it does not follow or after a
 // command it does not know). It does not read `read`, `printf -v`, `${X:=}`, `for X in`,
 // `source`, an interpreter, a script file or control flow (hosts.md#host-parity).
+// What it misses binds no agent: on Claude Code and Codex a verdict counts
+// only check rows a claimed stamp named (#972, ledger.ts sessionOwnsRun).
 // Words, not text, so a `grep WORKIT_HOST` or a quoted mention passes.
 import { shellScript } from "./delivery-verbs";
 import { segmentsOf, type ShellDialect } from "./shell-words";
