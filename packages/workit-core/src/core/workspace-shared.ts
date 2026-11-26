@@ -6,8 +6,8 @@
 import { spawnSync } from "node:child_process";
 import { GIT_TIMEOUTS } from "../git/rev";
 
-// A whole word in any script: a letter, digit or underscore on either side, ASCII or not, joins it.
-const NAMES_WORKIT = /(?<![\p{L}\p{N}_])workit(?![\p{L}\p{N}_])/iu;
+// A whole word in any script: a letter, combining mark, digit or underscore on either side joins it.
+const NAMES_WORKIT = /(?<![\p{L}\p{M}\p{N}_])workit(?![\p{L}\p{M}\p{N}_])/iu;
 const SESSION_TRAILER = /^\s*Workit-Session\s*:/iu;
 const WORKIT_MARKER = /<!--\s*workit[\s\S]*?-->/giu;
 const NEW_DOC = /\.mdx?$/iu;

@@ -10,6 +10,10 @@ test("Given a non-ASCII letter or digit next to workit, When the scan runs, Then
   expect(flagged("Workité\néworkit\nWorkit٣\nworkitß\nﾜworkitｱ")).toEqual([]);
 });
 
+test("Given a combining mark directly after workit or before it, When the scan runs, Then the line is not flagged", () => {
+  expect(flagged("workit́\néworkit")).toEqual([]);
+});
+
 test("Given workit as a whole word next to punctuation or a non-ASCII space, When the scan runs, Then each line is flagged", () => {
   expect(
     flagged("Workit.\n«workit»\nmy-workit-fork\nhttps://x.dev/workit\n`workit`\nuse WORKIT—now"),
