@@ -14,6 +14,14 @@ import type { Io } from "@/packages/workit-cli/src/output";
 import { forgeDeps } from "@/packages/workit-cli/src/verbs/forge-common";
 import { ledgerDeps } from "@/packages/workit-cli/src/verbs/ledger";
 import { recordIssuedSession } from "@/packages/workit-core/src/host-session";
+import {
+  appendLine,
+  defaultBase,
+  ledgerPath,
+  readLedger,
+  sealed,
+} from "@/packages/workit-core/src/ledger";
+import { setDiffKey, setStorePath } from "@/packages/workit-core/src/core/verdict-set";
 import { useConfigHome, type ConfigHome } from "../shared/grant-home";
 import {
   fixture,
@@ -354,4 +362,114 @@ test("Given a set verdict covering PR B, When the user voids its verdict, Then t
   const status = await run(["pr", "status", "--json"], b.cwd);
   expect(status.json().data.verdict).toMatchObject({ accepted: false, set: null });
   expect(status.json().data.verdict.setNote).toContain("that was not voided");
+});
+
+/** A set row appended to the store by hand, chain and all, as a forger with file access would. */
+const forgeSetRow = (fields: Record<string, unknown>, id = `forged-${Math.random()}`) => {
+  const written = appendLine(
+    setStorePath(),
+    (previous) => ({
+      ok: true,
+      value: sealed(fields, id, new Date().toISOString(), previous).line,
+    }),
+    {},
+  );
+  if (!written.ok) throw new Error(written.error);
+};
+
+const setHashOf = (repo: ForgeRepo) => {
+  const key = setDiffKey(repo.cwd, defaultBase(repo.cwd) ?? "main", repo.git("rev-parse", "HEAD"));
+  if (!key) throw new Error("no set key");
+  return key.hash;
+};
+
+const forgedFields = (a: ForgeRepo, b: ForgeRepo, extra: Record<string, unknown> = {}) => {
+  const file = ledgerPath(a.cwd);
+  if (!file.ok) throw new Error(file.error);
+  return {
+    type: "verdict.set",
+    set: "deps-1",
+    setHash: setHashOf(b),
+    lockfiles: [],
+    result: "verified",
+    kind: "review",
+    how: "forged",
+    actor: { host: "claude_code", session: "lead-A:ver-9", agentId: null },
+    self: false,
+    sessionSource: "env",
+    repo: null,
+    branch: "feature/x",
+    head: a.git("rev-parse", "HEAD"),
+    base: "main",
+    expires: new Date(Date.now() + 86_400_000).toISOString(),
+    ledger: file.value,
+    verdictHash: "sha256:none",
+    ...extra,
+  };
+};
+
+test("Given a hand-appended set row with no backing verdict in the recording ledger, Then PR B's gate refuses it", async () => {
+  const a = repoWith(CHANGE);
+  const b = repoWith(CHANGE);
+  workspace();
+  forgeSetRow(forgedFields(a, b));
+  forgeSetRow(
+    forgedFields(a, b, {
+      actor: { host: "cli", session: "x:y", agentId: null },
+      sessionSource: "flag",
+    }),
+  );
+  forgeFor(b);
+  const status = await run(["pr", "status", "--json"], b.cwd);
+  expect(status.json().data.verdict).toMatchObject({ accepted: false, set: null });
+  expect(status.json().data.verdict.setNote).toContain("none from a trusted non-author session");
+});
+
+test("Given a set row pointing at a real ledger verdict that differs in result or in set hash, Then PR B's gate refuses it", async () => {
+  const a = repoWith(CHANGE);
+  const b = repoWith(CHANGE);
+  const c = repoWith({ ...CHANGE, "src/hooks/guard.ts": "export const guard = 1;\n" });
+  workspace();
+  forgeFor(a);
+  const failed = await run(
+    ["ledger", "verdict", "failed", "--how", "broke it", ...verifier(a, "lead-A:ver-2"), "--json"],
+    a.cwd,
+    "lead-A",
+  );
+  expect(failed.code, failed.stdout).toBe(0);
+  const row = failed.json().data;
+  // Same id and chain hash as the real failed verdict, claiming a pass.
+  forgeSetRow(
+    forgedFields(a, b, {
+      actor: row.actor,
+      sessionSource: row.sessionSource,
+      sessionBound: true,
+      verdictHash: row.rowHash,
+    }),
+    row.id,
+  );
+  forgeFor(b);
+  expect((await run(["pr", "status", "--json"], b.cwd)).json().data.verdict.accepted).toBe(false);
+  // A real pass on A's diff, pointed at C's different diff.
+  const real = await recordSet(a);
+  expect(real.code, real.stdout).toBe(0);
+  const pass = real.json().data;
+  forgeSetRow(
+    forgedFields(a, c, {
+      actor: pass.actor,
+      sessionSource: pass.sessionSource,
+      sessionBound: true,
+      verdictHash: pass.rowHash,
+    }),
+    `${pass.id}-c`,
+  );
+  forgeFor(c);
+  expect((await run(["pr", "status", "--json"], c.cwd)).json().data.verdict.accepted).toBe(false);
+  // The real set verdict still covers B, and pr status records the gate met for the Stop hook.
+  forgeFor(b);
+  expect((await run(["pr", "status", "--json"], b.cwd)).json().data.verdict.accepted).toBe(true);
+  const rows = readLedger(b.cwd);
+  expect(
+    rows.ok && rows.value.rows.some((each) => each.type === "pr.gate" && each.via === "set"),
+  ).toBe(true);
 });

@@ -356,6 +356,12 @@ const SHELL_STATE = new Set(
     " ",
   ),
 );
+/**
+ * Words that make an appended command reach past the job (#891): a network
+ * fetch, a package runner, a push, a release or a deploy. A name or any
+ * argument (`git push`, `pnpm dlx`, `npm publish`) refuses the append.
+ */
+const EFFECTFUL = /^(?:curl|wget|npx|bunx|gh|dlx|push|publish|deploy)$/iu;
 /** What may follow `||` inside the group: it reports, it never runs a tool. */
 const FALLBACK: ReadonlySet<string> = new Set(["echo", "true"]);
 const FORM = 'more than && <command> or && (<command> || echo "<text>")';
@@ -429,8 +435,11 @@ function masking(before: string, appended: string): string | null {
     if (!name || !("word" in name) || !COMMAND.test(name.word)) return FORM;
     if (names ? !names.has(name.word) : SHELL_STATE.has(name.word.toLowerCase()))
       return names ? FORM : `the shell command ${name.word}`;
-    index += 1;
-    for (let token = list[index]; token && !("op" in token); token = list[index]) index += 1;
+    for (let token = list[index]; token && !("op" in token); token = list[index]) {
+      if ("word" in token && EFFECTFUL.test(token.word))
+        return `the effectful command ${token.word}`;
+      index += 1;
+    }
     return null;
   };
   while (index < list.length) {

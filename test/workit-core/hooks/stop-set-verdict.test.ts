@@ -1,18 +1,17 @@
-// #891: the Stop hook reads set verdicts and the sealed additiveRiskPaths
-// override as the merge gate does, so it never asks a session that delivered
-// a PR for a verdict the gate no longer needs.
+// #891: a set or stack verdict, or the sealed additiveRiskPaths, can meet a
+// PR's merge gate without a verdict of its own. The Stop hook cannot carry
+// those readers, so it trusts the `pr.gate` row `pr status` records once it
+// read the gate as met for the head, and never asks for a verdict then.
 import { afterAll, afterEach, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { claudeCodeAdapter, dispatchHook } from "@/packages/workit-core/src/hooks/index";
 import {
   appendHookObserved,
   appendObserved,
-  recordVerdict,
   type LedgerResult,
 } from "@/packages/workit-core/src/ledger";
-import { recordSetVerdict } from "@/packages/workit-core/src/core/verdict-set";
 import { useConfigHome, type ConfigHome } from "@/test/shared/grant-home";
 import { fixture, tempRoot } from "./hook-fixtures";
 
@@ -139,53 +138,38 @@ const claudeStop = (cwd: string) =>
 
 const RISKY = { "src/hooks/guard.ts": "export const guard = true;\n" };
 
-test("G a set verdict on the same diff from another repository, W the session that delivered PR B stops, T no verdict is asked; without it one is", () => {
-  const a = delivered({}, RISKY);
-  const b = delivered({}, RISKY);
+const gateRow = (root: string, head: string) =>
+  value(
+    appendObserved(root, {
+      type: "pr.gate",
+      actor: actor(SESSION),
+      branch: "feature/x",
+      head,
+      pr: 8,
+      lane: "full",
+      need: "non-author",
+      verdictId: "set-1",
+      via: "set",
+    }),
+  );
+
+test("G a PR on a risk path with no verdict of its own, W the session stops, T it asks for one until pr status recorded the gate met for that head (a set verdict, a sealed override)", () => {
+  const root = delivered({}, RISKY);
   workspace();
-  const before = claudeStop(b);
+  const before = claudeStop(root);
   expect(before.decision).toBe("block");
   expect(before.reason).toContain("an independent verdict");
-  rmSync(path.join(b, ".git", "workit", "hooks"), { recursive: true, force: true });
-  const verdict = value(
-    recordVerdict(
-      { cwd: a, actor: actor("lead-A:ver-1", "cli"), branch: "feature/x" },
-      { result: "verified", how: "exercised the guard" },
-    ),
+  const forget = () =>
+    rmSync(path.join(root, ".git", "workit", "hooks"), { recursive: true, force: true });
+  forget();
+  // A gate met for another head, or a row appended by hand outside the chain, counts for nothing.
+  gateRow(root, "0".repeat(40));
+  appendFileSync(
+    path.join(root, ".git", "workit", "ledger", "ledger.jsonl"),
+    `\n${JSON.stringify({ v: 1, id: "forged", at: new Date().toISOString(), type: "pr.gate", branch: "feature/x", head: git(root, "rev-parse", "HEAD"), observer: "workit_cli", actor: actor(SESSION) })}\n`,
   );
-  value(recordSetVerdict(a, verdict, "s1"));
-  expect(claudeStop(b)).toEqual({});
-});
-
-const CI = `name: CI
-on:
-  push:
-    branches: [main]
-jobs:
-  lint:
-    uses: acme/workflows/.github/workflows/node.yml@v3
-    with:
-      lint_command: npm run lint
-`;
-const APPEND = {
-  ".github/workflows/ci.yml": CI.replace("npm run lint\n", "npm run lint && npm run x:check\n"),
-  "src/app.ts": "export const app = 2;\n",
-};
-
-test("G a self verdict on a small change with an additive ci.yml append, W the session stops, T it asks for an independent verdict; under a sealed additiveRiskPaths it does not", () => {
-  const root = delivered(
-    { ".github/workflows/ci.yml": CI, "src/app.ts": "export const app = 1;\n" },
-    APPEND,
-  );
-  workspace();
-  recordVerdict(
-    { cwd: root, actor: actor(SESSION), branch: "feature/x" },
-    { result: "tests-verified", how: "bun test", self: true },
-  );
-  const out = claudeStop(root);
-  expect(out.decision).toBe("block");
-  expect(out.reason).toContain("an independent verdict");
-  rmSync(path.join(root, ".git", "workit", "hooks"), { recursive: true, force: true });
-  workspace({ additiveRiskPaths: [".github/workflows/ci.yml"] });
+  expect(claudeStop(root).decision).toBe("block");
+  forget();
+  gateRow(root, git(root, "rev-parse", "HEAD"));
   expect(claudeStop(root)).toEqual({});
 });

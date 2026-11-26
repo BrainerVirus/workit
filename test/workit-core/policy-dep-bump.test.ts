@@ -101,7 +101,7 @@ test("workflow: the allowed forms of an appended command are additive", () => {
     " && npm run a && npm run b",
     " && (npm run x || true)",
     " && (npm run x)",
-    " && npx --yes @acme/tidy@2.3.1 check --max-warnings=0 src/,test/",
+    " && ./node_modules/.bin/tidy check --max-warnings=0 src/,test/",
     ' && ./scripts/check.sh "a b" c',
   ])
     expect(edit("- run: npm run build", `- run: npm run build${tail}`)).toEqual({
@@ -192,7 +192,7 @@ const GREEN_TAILS = [
   " && npm run a && npm run b",
   " && (npm run x || true)",
   " && (npm run x)",
-  " && npx --yes @acme/tidy@2.3.1 check --max-warnings=0 src/,test/",
+  " && ./node_modules/.bin/tidy check --max-warnings=0 src/,test/",
   ' && ./scripts/check.sh "a b" c',
 ];
 

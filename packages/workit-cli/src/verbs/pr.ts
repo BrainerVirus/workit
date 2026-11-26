@@ -83,7 +83,15 @@ import {
   gitFlowOf,
   type FlowRoute,
 } from "@workit-dev/core/src/core/branch";
-import { actorFromEnv, carryLabel, readLedger, type CarryNote } from "@workit-dev/core/src/ledger";
+import {
+  actorFromEnv,
+  appendObserved,
+  carryLabel,
+  readLedger,
+  type CarryNote,
+  type LedgerActor,
+  type ReadRow,
+} from "@workit-dev/core/src/ledger";
 import { checkVerdictsCovered, type StackCover } from "@workit-dev/core/src/verdict-cover";
 import { setCoverLabel, type SetCover } from "@workit-dev/core/src/core/verdict-set";
 import {
@@ -478,7 +486,7 @@ async function status(argv: string[], io: Io): Promise<number> {
     ok({
       ...doc,
       nextHint: hint,
-      verdict: verdictBlock(io.cwd, doc.head.branch, doc),
+      verdict: verdictBlock(io.cwd, doc.head.branch, doc, actorFromEnv(io.env)),
       issues,
     }),
     (data) => {
@@ -572,6 +580,7 @@ function verdictBlock(
     head: { sha: string };
     checks?: { state: string };
   },
+  actor?: LedgerActor,
 ) {
   const ledger = readLedger(cwd, { integrity: true });
   if (!ledger.ok) return null;
@@ -617,6 +626,17 @@ function verdictBlock(
           head: doc.head.sha,
           ci: doc.checks?.state ?? null,
         });
+  const met =
+    gate !== null && gate.satisfied && (gate.need === "none" || check.head === doc.head.sha);
+  if (met && actor)
+    recordGate(cwd, ledger.value.rows, {
+      actor,
+      branch,
+      head: doc.head.sha,
+      pr: doc.number,
+      gate,
+      check,
+    });
   return {
     merge: landed,
     lane: gate
@@ -650,6 +670,42 @@ function verdictBlock(
     setNote: check.setNote,
     reverify: check.reverify,
   };
+}
+
+/**
+ * A `pr.gate` row (#891): the merge gate read as met for this head, and by
+ * what. The Stop hook reads it instead of recomputing set and stack verdicts
+ * or the sealed additiveRiskPaths, which its bundle cannot carry. Once per head.
+ */
+function recordGate(
+  cwd: string,
+  rows: readonly ReadRow[],
+  input: {
+    actor: LedgerActor;
+    branch: string;
+    head: string;
+    pr: number;
+    gate: { need: string; verdictId: string | null; lane: { lane: string } };
+    check: { set: SetCover | null; cover: StackCover | null };
+  },
+): void {
+  if (
+    rows.some(
+      (row) => row.type === "pr.gate" && row.branch === input.branch && row.head === input.head,
+    )
+  )
+    return;
+  appendObserved(cwd, {
+    type: "pr.gate",
+    actor: input.actor,
+    branch: input.branch,
+    head: input.head,
+    pr: input.pr,
+    lane: input.gate.lane.lane,
+    need: input.gate.need,
+    verdictId: input.gate.verdictId,
+    via: input.check.set ? "set" : input.check.cover ? "stack" : "own",
+  });
 }
 
 /**

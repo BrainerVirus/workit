@@ -216,6 +216,13 @@ workit workspace set personal additiveRiskPaths='[".github/workflows/ci.yml"]'
 workit workspace seal
 ```
 
+**What you trust.** "Additive" is a shape rule, not a judgment of the
+command: once a path is sealed, any command appended with `&&` to a step's
+`run:` or a reusable workflow's command input skips review there (only a
+small deny-list is refused: `curl`, `wget`, `npx`, `bunx`, `… dlx`, `gh`, and
+any `push`, `publish` or `deploy` word). List only workflows whose appends you
+would accept unread; `workspace set` repeats this before it asks.
+
 It lowers a review gate, so only you change it, at your own terminal:
 `workspace set` asks a y/N and refuses an agent or headless shell. It is
 sealed with the grants and read only while the [seal](#the-seal) is valid;

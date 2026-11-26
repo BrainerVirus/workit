@@ -483,6 +483,9 @@ const parseExternalRepos = (raw: string): string[] | null | Error => {
 };
 
 const ADDITIVE_RISK_PATHS_KEY = "additiveRiskPaths";
+/** "Additive" is a shape rule: what the user is trusting when they seal a path. */
+const ADDITIVE_WARNING =
+  "Warning: additive is a shape rule, so any command appended with && to a listed workflow skips review (curl, wget, npx, bunx, dlx, gh, push, publish and deploy are refused); list only workflows whose appends you trust.";
 /** A repo-relative glob: path characters, `*` and `?`; no `..` segment. */
 const RISK_GLOB = /^(?!.*(?:^|\/)\.\.(?:\/|$))[\w.*?/@+-]+$/u;
 
@@ -796,7 +799,7 @@ async function set(rawArgv: string[], io: Io, deps: GrantDeps): Promise<number> 
     const answer = await askOrCancel(io, () =>
       confirmWith(
         deps,
-        `Change workspace "${name}": ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants; agents write issues to every externalRepos repository; an additive edit to an additiveRiskPaths path follows the rest of the diff's review lane.`,
+        `Change workspace "${name}": ${remoteSpecs.join(" ")}? Checkouts of a remote no longer listed keep their own folder's grants; agents write issues to every externalRepos repository; an additive edit to an additiveRiskPaths path follows the rest of the diff's review lane.${remoteSpecs.some((spec) => spec.startsWith(`${ADDITIVE_RISK_PATHS_KEY}=`)) ? ` ${ADDITIVE_WARNING}` : ""}`,
       ),
     );
     if (answer === null) return cancelled(io);

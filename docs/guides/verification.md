@@ -292,8 +292,11 @@ keeps the lane above.
   with `sealed additive edit: <file>`. An edit that is not purely additive
   stays `full` and says so; a file the repo's `.workit/risk-paths` lists
   never softens; a list the seal does not cover is ignored with the note
-  `… is ignored: the seal is not valid`. `pr status`, `pr merge`, `stack
-  land` and the Stop hook read it.
+  `… is ignored: the seal is not valid`. `pr status`, `pr merge` and `stack
+  land` read it; see the Stop hook note under set verdicts. Since "additive"
+  is a shape rule, an append whose command or any argument is `curl`,
+  `wget`, `npx`, `bunx`, `dlx`, `gh`, `push`, `publish` or `deploy` is never
+  additive ([what you trust](grants.md#additive-risk-paths)).
 
 #### Repo risk paths: `.workit/risk-paths`
 
@@ -408,9 +411,8 @@ hold:
 If the lower branch gained a commit or was amended after the verdict, or
 Workit cannot read any of this, it is not covered and needs its own. `workit pr merge`, `workit stack land`,
 `workit stack status`, `workit pr status` and `workit ledger check` name the
-covering verdict (`cover` in JSON). The Stop hook still reads each branch's
-own verdicts: the stack cache and patch-id comparison would not fit the
-hook bundle's size budget.
+covering verdict (`cover` in JSON). The Stop hook reads the `pr.gate` row
+`pr status` records instead (see set verdicts below).
 
 **Set verdicts.** The same change made in several repositories (a
 dependency bump across a dozen services) is reviewed once. A non-author
@@ -433,12 +435,13 @@ a stack verdict) accepts the set verdict when all of these hold:
   any file but a lockfile, never matches;
 - the verdict passed (`verified` or `tests-verified`), and no newer set
   verdict on that hash failed;
-- its session is a host-derived `<lead>:<agent>` id the gates trust (issued
-  by the SubagentStart hook, or set by the host's own shell), never `--as`
-  or `--self`; an author's own session is refused when recording, so an
-  author cannot share its own review;
+- its session is a host-issued `<lead>:<agent>` id the gates trust (issued
+  by the SubagentStart hook with its token, or set by the host's own shell;
+  never `cli`, `--as` or `--self`); an author's own session is refused when
+  recording, so an author cannot share its own review;
 - that session authored neither the judged branch nor the PR's branch;
-- it was recorded less than 7 days ago;
+- its verdict row is still in the recording checkout's ledger, unvoided
+  (see below), and was recorded there less than 7 days ago;
 - when the PR changed a lockfile (left out of the hash, since each
   repository regenerates its own), its head's CI is green: the evidence a
   dependency bump's lockfile takes.
@@ -449,10 +452,22 @@ it (`verdict: accepted (set verdict <id> (<name>) from <repo> <branch> @
 <head>, diff <hash>, until <time>)`, `set` in `--json`), and says why a
 matching one does not apply (`setNote`: expired, failed, an author's,
 missing green CI). `pr merge`, `stack land` and `workit ledger verdict
-[<branch>]` read it too. The Stop hook does as well, so it does not ask
-for a verdict a set verdict already gives, with one exception: it does not
-read CI, so a PR that changed a lockfile is still asked for one there,
-although the merge gate takes the set verdict once CI is green.
+[<branch>]` read it too. The Stop hook cannot carry these readers, so
+`pr status` records a `pr.gate` row once it reads the gate as met for a head
+(by the PR's own, a stack or a set verdict, or the sealed
+`additiveRiskPaths`), and the Stop hook asks for no verdict on that head.
+
+**Why a set row cannot be forged.** The store's hash chain has no secret, so
+a set row is only a pointer: it names the recording checkout's ledger and
+the chain hash of its verdict row there. The gate reads that ledger and
+counts the set verdict only when it holds that verdict, chained and not
+voided, with the same result and session, by a host-issued `<lead>:<agent>`
+session (a real host, never `cli` or `--as`, and a `--session` one only with
+its token) that authored neither branch, on a range whose set hash is the
+row's. Its 7 days run from that ledger verdict. Both the store
+(`<state>/verdicts/`) and every repository ledger
+(`<git common dir>/workit/ledger/`) are guarded paths: an agent's Edit,
+Write or shell write to them is denied (the ledger guard).
 
 `workit ledger void <id>` of a verdict shared with `--set` also retires the
 set verdict: a void row in the same store, after which it covers no PR in

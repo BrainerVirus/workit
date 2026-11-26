@@ -579,8 +579,6 @@ export function branchLane(
     workingTree?: boolean;
     judgment?: { riskTier: "trivial" | "normal" | "high" } | null;
     riskPaths?: readonly string[];
-    /** The workspace's sealed additiveRiskPaths (autonomy.ts additiveRiskPathsPolicy). */
-    additivePaths?: readonly string[];
   },
 ): BranchLane {
   const candidates = options.base ? [`origin/${options.base}`, options.base] : [];
@@ -605,22 +603,15 @@ export function branchLane(
     };
   }
   const repoRisk = parseRiskPaths(fileAt(cwd, fork, RISK_PATHS_FILE) ?? "");
-  // The sealed additiveRiskPaths (#891): a purely additive edit to one leaves the
-  // lane, unless the repo's own risk paths name it (core/risk-override.ts).
-  const relaxed = files.filter(
-    (file) =>
-      file.workflow?.additive &&
-      options.additivePaths?.some((glob) => globMatch(glob, file.path)) &&
-      !repoRisk.some((glob) => globMatch(glob, file.path)),
-  );
-  const lane = computeLane({
-    files: files.filter((file) => !relaxed.includes(file)),
-    riskTier,
-    riskPaths: [...repoRisk, ...(options.riskPaths ?? [])],
-  });
-  if (relaxed.length)
-    lane.reasons.push(`sealed additive edit: ${relaxed.map((file) => file.path).join(", ")}`);
-  return { ...lane, base, head: options.head };
+  return {
+    ...computeLane({
+      files,
+      riskTier,
+      riskPaths: [...repoRisk, ...(options.riskPaths ?? [])],
+    }),
+    base,
+    head: options.head,
+  };
 }
 
 /**
