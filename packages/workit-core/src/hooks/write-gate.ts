@@ -2025,35 +2025,36 @@ const hardLinked = (
  * under a dir named `.git`, or one holding HEAD and objects (a bare repository,
  * `--separate-git-dir`). Every `workit/ledger` in the path counts.
  */
-export const inRepoLedger = (
-  file: string,
-  exists: (file: string) => boolean = existsSync,
-): boolean =>
+export const inRepoLedger = (file: string): boolean =>
   [...file.matchAll(/[\\/]workit[\\/]ledger(?=[\\/]|$)/g)].some(({ index }) => {
     const gitDir = file.slice(0, index);
     return (
       /(?:^|[\\/])\.git$/.test(gitDir) ||
-      (exists(path.join(gitDir, "HEAD")) && exists(path.join(gitDir, "objects")))
+      (existsSync(path.join(gitDir, "HEAD")) && existsSync(path.join(gitDir, "objects")))
     );
   });
 
 /**
  * Whether `source` holds a guarded path, so a link to it reaches one: it is an
- * ancestor of the state dir or a config dir, or of a repository ledger it or
- * its `.git` holds, or of the ledger of the repository `cwd` is in.
+ * ancestor of the state dir, a config dir or a folder ledger
+ * (`<state>/folders[/<slug>]`), or of a repository ledger it or its `.git`
+ * holds, or of the ledger of the repository `cwd` is in.
  */
 const holdsGuarded = (cwd: string, source: string, state: string, configs: string[]): boolean => {
   const real = canonical(source);
-  const holds = (file: string) => {
-    const rel = path.relative(real, canonical(file));
+  const below = (parent: string, child: string) => {
+    const rel = path.relative(parent, child);
     return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
   };
+  const holds = (file: string) => below(real, canonical(file));
+  const inState = path.relative(canonical(state), real).split(path.sep);
   const ledgers = ["ledger", "workit/ledger", ".git/workit/ledger"]
     .map((rel) => path.join(real, rel))
     .filter((dir) => existsSync(dir) && inRepoLedger(dir));
   const own = ledgerPath(cwd);
   return (
     holds(state) ||
+    (below(canonical(state), real) && inState[0] === "folders" && inState.length <= 2) ||
     configs.some(holds) ||
     ledgers.length > 0 ||
     (own.ok && existsSync(own.value) && holds(path.dirname(own.value)))

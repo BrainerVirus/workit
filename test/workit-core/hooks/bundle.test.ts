@@ -127,10 +127,10 @@ const HOOK_ENTRIES = [
 // core run plus 2 KiB; whichever of #955 and #956 merges second reconciles it.
 // guard residuals (#891 review, 2026-11-26, Bun 1.4.5, on a3dafa5a): the link and mount source check,
 // ledgers under a git common dir not named .git, and the Stop hook's pr.gate retirement (gateStands)
-// take core run from 554,496 B to 556,204 B (+1,708 B; Claude Code 549,556 B, Codex 537,879 B,
-// Cursor 537,273 B). The ceiling is core run plus 2 KiB; whichever of this and #956 merges second
+// take core run from 554,496 B to 556,295 B (+1,799 B; Claude Code 549,647 B, Codex 537,970 B,
+// Cursor 537,364 B). The ceiling is core run plus 2 KiB; whichever of this and #956 merges second
 // reconciles it.
-const BUDGET = 558_252;
+const BUDGET = 558_343;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

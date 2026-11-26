@@ -157,6 +157,8 @@ test("G a link or mount into a guarded registry, or of a dir holding one, then a
   // parent, a git dir, the repository it is in, a ledger's workit dir.
   for (const source of [
     state,
+    path.join(state, "folders"),
+    path.join(state, "folders", "app-1a2b"),
     path.dirname(home.configDir),
     path.join(root, ".git"),
     root,
