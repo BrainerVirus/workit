@@ -1401,9 +1401,22 @@ resume`). It also makes the worker's scratch dir for its temp files,
   pushes with a refspec, refspec pushes with `:` or `+`, `git replace|filter-branch|gc|prune|repack|sparse-checkout`,
   `git config` and `git remote` writes, `git stash drop|clear`, and `workit
 fanout plan|worktree` (also behind `--json`, `--cwd`, `--session`). A
-  command whose writes Workit cannot read (`python -c`, `node -e`, `node -p`,
-  `python -m <module>`, `xargs rm`, `find -delete`) counts as a change in the
-  directory it runs in, and a link inside the worktree may not point outside
+  command whose writes Workit cannot read (`python -m <module>`, `xargs rm`,
+  `find -delete`, or a `python -c`, `node -e` or `node -p` script that may
+  write, delete, run a command or load code) counts as a change in the
+  directory it runs in. An inline script that only reads (f-strings, template
+  literals, whole-line comments and division included) changes nothing when
+  it imports only the modules Workit reads: `json`, `re`, `pathlib`,
+  `os.path`, `sys.argv`/`stdin`/`stdout`, Node's `path`, `url`, `util` and
+  `fs` reads (`readFileSync`, `readdirSync`, `statSync`, `existsSync`…),
+  among others; any other import, a module used other than as `name.member`,
+  `process` past `argv`/`env`/`cwd`/`stdout`, `awk` that runs a command or
+  prints to a file, `sed` with `w` or `e`, `deno eval` and `tsx -e` count as
+  writers, and so do wrappers whose command Workit does not follow (`flock`,
+  `ssh`, `watch`, `strace`). A verifier or reviewer refused this way is told
+  which import or name it was, and is told to retry from its scratch dir
+  when the script reads no relative path, else to read with `cat`, `jq`,
+  `grep` or the Read tool. A link inside the worktree may not point outside
   it. A refusal is two lines: what was refused, then the exact `Retry as:` call
   (an interpreter run elsewhere becomes `cd <worktree> && …`) or why none
   exists. After a `cd -`, `cd "$VAR"` or

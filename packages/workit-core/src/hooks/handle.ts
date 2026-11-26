@@ -130,9 +130,6 @@ const isolatedGit = (cwd: string): string =>
       : "`git commit` (this workspace sets trailers: false: add no Workit-Session trailer), `git push`"
   }; add Co-Authored-By with \`git commit --trailer\` in the same commit, never by amending), never \`workit git …\`: Claude Code's worktree isolation refuses a command that wraps git and cannot be turned off (https://code.claude.com/docs/en/worktrees#how-claude-code-enforces-isolation). Never dodge that check by renaming or re-wrapping git. Use workit for the non-git verbs (\`workit check\`, \`workit ledger\`, \`workit pr\`).`;
 
-/** A verdict run from a temp dir finds no ledger: it names the candidate's checkout (wave 11 C1). */
-const JUDGE_CWD = " Add `--cwd <candidate worktree>` when your shell is elsewhere.";
-
 const subagentStartText = (
   input: HookInput,
   descriptor: HostDescriptor,
@@ -168,7 +165,7 @@ const subagentStartText = (
   // acts as that session, so the line names no --session and no --token (a
   // token on a command line lands in the rollout, #427) and nothing is issued.
   if (descriptor.host === "codex_cli" || descriptor.host === "codex_desktop")
-    return `${readOnly} Its shell already acts as its own Workit session, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${verdictCommand({ branch, judge, cwd: at })}\`.${JUDGE_CWD} Add no session or token option to it, and never set WORKIT_SESSION_ID by hand.${checksText}`;
+    return `${readOnly} Its shell already acts as its own Workit session, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${verdictCommand({ branch, judge, cwd: at })}\`. Add no session or token option to it, and never set WORKIT_SESSION_ID by hand.${checksText}`;
   // `ledger verdict` accepts `<lead>:<agent id>` only when this hook issued it,
   // and only with the token it hands to this subagent alone. Claude Code
   // subagents share the lead's environment, so no per-agent env var or file
@@ -180,7 +177,7 @@ const subagentStartText = (
   if (session && !token)
     return `${readOnly} ${own} was already issued to an earlier subagent, so no token is handed out again and a verdict under it would be refused (unbound_session). Record no verdict as ${own}: spawn a fresh verifier or reviewer, which gets its own session and token.`;
   const line = verdictCommand({ branch, judge, session: own, token, cwd: at });
-  return `${readOnly} Its own Workit session is ${own}, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${line}\`.${JUDGE_CWD}${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}${checksText}`;
+  return `${readOnly} Its own Workit session is ${own}, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${line}\`.${token ? " The token is this subagent's alone: never write it into a report, a file or a commit. --token needs a workit CLI at least as new as this plugin; if the CLI answers that --token is an unknown option, update the workit CLI (workit upgrade --cli) and record again." : ""}${checksText}`;
 };
 
 const PRE_TOOL = new Set<HookEventKind>(["shell.pre", "write.pre", "tool.pre"]);

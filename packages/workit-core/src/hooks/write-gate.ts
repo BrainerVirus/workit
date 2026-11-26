@@ -12,6 +12,7 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
+import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileSignature, TaskReader } from "../core/task-read";
@@ -128,13 +129,64 @@ const operands = (words: string[]) => words.filter((item) => !item.startsWith("-
 const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 
 /**
+ * Past a wrapper's options, their values and numbers (`-c 0-2`, `5s`) from `at`, and with `#`
+ * in its option letters its one operand (`taskset ff`, `timeout inf`); with `assigns`, past
+ * `NAME=value` words too (`sudo X=1`).
+ */
+const pastOptions = (
+  words: readonly string[],
+  at: number,
+  takes: string,
+  assigns = false,
+): number => {
+  for (let operand = !takes.includes("#"); ; at++) {
+    for (; at < words.length && /^-|^\d[\w.,-]*$|^\w+\+?=/.test(words[at]);) {
+      if (/^\w+\+?=/.test(words[at]) && !assigns) break;
+      operand ||= /^\d/.test(words[at]);
+      at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
+    }
+    if (operand || at >= words.length) return at;
+    operand = true;
+  }
+};
+
+/**
+ * The command past leading assignments, PREFIXES (up to an `xargs`) and
+ * wrappers (`timeout 5`, `nice -n 5`, `setsid`, `stdbuf -o0`, `ionice -c3`,
+ * `chrt -f 1`, `taskset -c 0-2`, `npx`, `!`), with `env`'s options: `-u NAME` and `-C DIR`
+ * take a value (also in a cluster, `-iu NAME`), and `-S '<line>'`, `-iS'<line>'` or
+ * `--split-string[=]<line>` split the line into the command.
+ */
+const pastLead = (input: readonly string[]): string[] => {
+  let words = [...input];
+  for (let env = false; words.length && words[0] !== "xargs";) {
+    const [word, next = ""] = words;
+    const name = word.split(/[\\/]/).at(-1) ?? "";
+    const split = env ? /^(?:-[^-S]*S|--split-string=?)(.*)$/s.exec(word) : null;
+    let at = 1;
+    if (split)
+      words = [
+        ...(split[1] || next).split(/\s+/).filter(Boolean),
+        ...words.slice(split[1] ? 1 : 2),
+      ];
+    else if (env && word.startsWith("-"))
+      words = words.slice(/^-[^-]*[uC]$|^--(?:unset|chdir)$/.test(word) ? 2 : 1);
+    else if (name !== "env" && WRAPPERS[name] !== undefined)
+      words = words.slice(pastOptions(words, at, WRAPPERS[name]));
+    else if (PREFIXES.has(word) || /^\w+\+?=/.test(word)) words = words.slice(1);
+    else break;
+    env = name === "env" || (env && word.startsWith("-"));
+  }
+  return words;
+};
+
+/**
  * The script `workit check … -- <cmd>` runs, so the gates judge it as if it
  * ran raw: the `--shell` string, a `bash -c` script, or the argv. Other
  * workit verbs stay exempt (null).
  */
 const wrappedScript = (input: string[]): string | null => {
-  let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) words = words.slice(1);
+  const words = pastLead(input);
   const tail = workitCheckTail(words);
   if (!tail) return null;
   if ("script" in tail) return tail.script;
@@ -146,8 +198,7 @@ const wrappedScript = (input: string[]): string | null => {
 
 /** The files one simple command edits: [] none, null unknown. */
 const editsOf = (input: string[]): string[] | null => {
-  let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) words = words.slice(1);
+  const words = pastLead(input);
   const [verb, ...args] = words;
   const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
   if (!name || name === "workit" || (name === "npx" && args.some((item) => /workit/.test(item))))
@@ -218,14 +269,19 @@ const editsOf = (input: string[]): string[] | null => {
   }
 };
 
-/** Wrappers that run their operand as the command, with the option letters that take a value. */
+/**
+ * Wrappers that run their operand as the command, with the option letters that take a value
+ * (`#`: one operand comes before the command).
+ */
 const WRAPPERS: Record<string, string> = {
   sudo: "ugCDhpRrTtU",
   doas: "uC",
   env: "uCS",
   nice: "n",
   ionice: "cnp",
-  timeout: "sk",
+  timeout: "#sk",
+  chrt: "#TPD",
+  taskset: "#",
   stdbuf: "ioe",
   time: "fo",
   nohup: "",
@@ -240,6 +296,8 @@ const WRAPPERS: Record<string, string> = {
 };
 
 const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/;
+/** An interpreter option that runs inline code: `-c`, `-e`, `-p`, `--eval[=<code>]`, `--print[=<code>]`. */
+const INLINE_CODE = /^-[a-zA-Z]*[cep]$|^--(?:eval|print)(?:=|$)/;
 
 /** Whether `file` is a config dir itself. */
 const isConfigDir = (file: string): boolean =>
@@ -257,39 +315,314 @@ const READ_CALLS =
   /^(?:print|log|info|warn|error|debug|puts|readdir(?:Sync)?|listdir|scandir|iterdir|glob|l?stat(?:Sync)?|exists(?:Sync)?|isdir|isfile|is_dir|is_file|access(?:Sync)?|realpath(?:Sync)?|dirname|basename|relative|str|repr|len)$/;
 /** Calls that change files (Python, Node, Ruby, PHP names), for a path value that may reach one. */
 const MUTATING_CALLS =
-  /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
+  /^(?:renames?(?:Sync)?|move(?:_into)?|copy(?:2|file|tree|File|_into)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|f?truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
 /**
- * Inline code that runs a command, deletes, loads code by path, reaches a
- * call by a computed name or opens a file by other than a plain path and read
- * mode (FREE_OPEN): a word anywhere in it, string literals included. A
- * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
+ * Inline code that runs code by name, reaches a call by a computed name, deletes (a file's
+ * `.delete()`), changes a file's mode or times through a member of a module Workit reads, or
+ * sets a loader: a word anywhere in it, string literals included. The modules and globals that
+ * run commands are refused by `unread`.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
-/** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
-const FREE_OPEN =
-  /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
+  /getattr|Reflect|getOwnPropertyDescriptor|FileIO|\.copy\s*\((?!\s*\))|utime|ch(?:mod|own)|\.delete\s*\(\s*\)|(?:PYTHON|NODE_)\w*\+?=|-r\b|--(?:require|import|env-file|[\w-]*loader)|\b(?:exec\w*|eval|(?:unlink|rename|remove)\w*)\b|\]\s*\(/;
+/**
+ * Inline code's tokens, left to right: a whole-line comment (`#`, `//`, or a
+ * block comment that starts a line), a read (`open(<literal path or name>[,
+ * <read mode>][, encoding=…])`, printing to stdout or stderr), a
+ * triple-quoted string, a template literal, an f-string, a string literal, or
+ * a regex literal where one may start: not after a name, a number, `.`, `]`
+ * or a quote (`len(a) / 2` divides) unless the name is `return`, `typeof`… A
+ * block comment that starts mid-line is not read as one, so a quote in it is
+ * left over.
+ */
+const TOKENS =
+  /^[ \t]*(#.*|\/\/.*|\/\*[\s\S]*?\*\/)|\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\2)[^'"\\\n]*\2|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\3|encoding\s*=\s*(['"])[\w-]+\4)\s*)*\)|std(?:out|err)\.write|([rRbBuUfF]{0,2})('''|""")(?:\\[\s\S]|(?!\6)[\s\S])*?\6|`((?:\\[\s\S]|\$\{[^{}`]*\}|[^\\`$]|\$(?!\{))*)`|[rR]?[fF][rR]?(['"])((?:\\.|\{[^{}\n]*\}|(?!\8)[^\\\n{}])*)\8|(?<![fF][rR]?)(['"])(?:\\.|(?!\10)[^\\\n])*\10|(?<=(?:^|[^\w$.\]'"`\s]|\b(?:return|typeof|void|delete|case|in|yield|await|else|do))\s*)\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\//gm;
 
 /**
- * Whether inline Python or Node code may change files: SPAWNS, or a word
- * outside FREE_OPEN and string literals that names a call in MUTATING_CALLS
- * (bar a list's `append` and `copy`, and printing to stdout or stderr).
+ * Inline code as `writesIn` reads it: reads and string literals dropped, a
+ * template literal or an f-string replaced by the code in its braces, a
+ * comment's quotes dropped (a `#` line is a comment only in Python: in Node
+ * it may be a private field), and a triple-quoted f-string and a regex
+ * literal kept, so their quotes are left over.
  */
-const writesIn = (text: string): boolean => {
-  const bare = text
-    .replace(FREE_OPEN, "")
-    .replace(/std(?:out|err)\.write|(?<![fF][rR]?)(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "");
-  // Fail closed where the strings cannot be told apart: a quote left over (an f-string, a
-  // regex literal), `${…}`, a `\u` or `\x` escape, or a regex literal holding a quote.
-  return (
-    SPAWNS.test(text) ||
-    /['"]/.test(bare) ||
-    /\$\{|\\[ux]|(?:^|[(,=:;!&|?{}[\s])\/(?![/*])[^/\n]*['"]/.test(text) ||
-    [...bare.matchAll(/[\w$]+/g)].some(
-      ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
-    )
+const strip = (text: string, python: boolean, modules: string[] = []): string =>
+  text.replace(
+    TOKENS,
+    (
+      token: string,
+      comment: string | undefined,
+      _path: string | undefined,
+      _mode: string | undefined,
+      _encoding: string | undefined,
+      prefix: string | undefined,
+      triple: string | undefined,
+      template: string | undefined,
+      _quote: string | undefined,
+      fstring: string | undefined,
+      string: string | undefined,
+      at: number,
+    ) => {
+      const code = template ?? fstring;
+      if (comment) return python || comment[0] !== "#" ? token.replace(/['"`]/g, "") : token;
+      if (code !== undefined)
+        return `\n${strip(code.match(/\{[^{}]*\}/g)?.join("\n") ?? "", python, modules)}\n`;
+      // A module a `require(`, `import(`, `import` or `from` names stands as `«<index in modules>»`.
+      if (
+        string &&
+        /^[\w@.:/-]+$/.test(token.slice(1, -1)) &&
+        /(?:\b(?:require|import)\s*\(\s*|\b(?:from|import)\s*)$/.test(
+          text.slice(Math.max(0, at - 24), at),
+        )
+      )
+        return `«${modules.push(token.slice(1, -1)) - 1}»`;
+      // A string stands as `0`, so a call still shows how many arguments it takes.
+      if (string || (triple && !/f/i.test(prefix ?? ""))) return "0";
+      // A read is dropped; `stdout.write` stays `stdout`, a member of `sys` and `process`.
+      return token[0] === "o" ? "" : token[0] === "s" ? token.slice(0, 6) : token;
+    },
   );
+
+/** Modules inline code may import whole: Python's, then Node's (bare or `node:`, and any `*.json`). */
+const PY_WHOLE = new Set(
+  "json re math collections itertools functools datetime time hashlib base64 glob fnmatch csv io string textwrap statistics difflib shlex pprint typing ast tomllib configparser pathlib urllib.parse xml.etree.ElementTree os.path".split(
+    " ",
+  ),
+);
+const NODE_WHOLE = new Set(
+  "path os url util crypto assert zlib querystring readline buffer".split(" "),
+);
+const FS_READS =
+  "readFileSync readFile readdirSync readdir statSync lstatSync stat lstat existsSync accessSync realpathSync readlinkSync createReadStream promises constants";
+/** Modules (and Node globals) inline code may use only through these members. */
+const MEMBERS: Record<string, string> = {
+  "py os": "path getcwd listdir scandir walk stat environ getenv sep linesep",
+  "py sys": "argv stdin stdout stderr exit version version_info platform path maxsize",
+  // `yaml.unsafe_load` and the full loaders build objects from tags: code.
+  "py yaml": "safe_load safe_load_all safe_dump safe_dump_all YAMLError",
+  fs: FS_READS,
+  "fs/promises": FS_READS,
+  process: "argv env cwd exit exitCode stdout stderr stdin platform version versions hrtime",
+  Bun: "file argv env version inspect",
 };
+/**
+ * Names inline code may not use: a dunder, a private member (`._x`, Python and Node), a reflective builtin or global, code
+ * evaluated from an annotation, a module reached through another; in Node, a computed object key
+ * or (strings included) a `flag` option, which opens a file to write.
+ */
+const AMBIENT = {
+  py: /__\w+__|\.\s*_|(?<![\w.])(?:compile|globals|locals|vars|setattr|delattr|breakpoint|help)(?!\w)|get_type_hints|ForwardRef|\.\s*(?:os|sys|subprocess|shutil|builtins|importlib|ctypes|posix|codecs)(?!\w)/,
+  js: /__\w+__|\.\s*_|(?<![\w$.])(?:globalThis|global|module|Function|WebAssembly|Worker|Deno)(?![\w$])|[{,]\s*\[[^\]]*\]\s*:/,
+  raw: /constructor|[gs]etPrototypeOf|getOwnPropertyNames|\bflags?\b/,
+};
+const OUTSIDE =
+  " is outside the modules Workit reads in inline code (json, re, pathlib, os.path, fs reads…)";
+
+/**
+ * Why inline code (`bare`, as `strip` left it, with the `modules` it names) reaches past the
+ * modules Workit reads: an import that is not literal or not in PY_WHOLE, NODE_WHOLE or MEMBERS,
+ * a name it imports that is not an allowed member, a module it binds (or a Node global) used
+ * other than as `name.member` (a member in MEMBERS where the module has a list), or an AMBIENT
+ * name (in Node, `raw` is matched against the whole `text`, strings included). Null when none.
+ */
+const unread = (
+  bare: string,
+  modules: readonly string[],
+  python: boolean,
+  text: string,
+): string | null => {
+  let why: string | null = null;
+  const refuse = (what: string) => {
+    why ??= `\`${what.trim().replace(/«(\d+)»/g, (_, at) => `'${modules[at]}'`)}\`${OUTSIDE}`;
+    return " ";
+  };
+  // Each name a module is bound to, with the members it may be used with ("" any).
+  const bound = new Map<string, string>();
+  /** The members `module` may be used with: "" any, undefined not allowed. */
+  const members = (module: string): string | undefined =>
+    python
+      ? PY_WHOLE.has(module)
+        ? ""
+        : MEMBERS[`py ${module}`]
+      : NODE_WHOLE.has(module) || module.endsWith(".json")
+        ? ""
+        : MEMBERS[module];
+  const allows = (list: string, member: string) => !list || list.split(" ").includes(member);
+  // A whole-line comment (`strip` keeps its words) imports nothing.
+  let rest = bare.replace(python ? /^[ \t]*#.*/gm : /^[ \t]*(?:\/\/.*|\/\*[\s\S]*?\*\/)/gm, " ");
+  if (python) {
+    rest = rest
+      .replace(
+        /(?<![\w.])from\s+([\w.]+)\s+import\s+(\*|\([\w\s,]*\)|\w+(?:\s+as\s+\w+)?(?:\s*,\s*\w+(?:\s+as\s+\w+)?)*)/g,
+        (statement, module: string, list: string) => {
+          for (const item of list.replace(/[()]/g, "").split(",")) {
+            const [name, alias = name] = item.trim().split(/\s+as\s+/);
+            const of = members(module);
+            // `from os import path` binds a module; `from json import *` binds names Workit cannot see.
+            if (members(`${module}.${name}`) !== undefined)
+              bound.set(alias, members(`${module}.${name}`)!);
+            else if (name === "*" || of === undefined || (name && !allows(of, name)))
+              return refuse(statement);
+          }
+          return " ";
+        },
+      )
+      .replace(
+        /(?<![\w.])import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)/g,
+        (statement, list: string) => {
+          for (const item of list.split(",")) {
+            const [module, alias] = item.trim().split(/\s+as\s+/);
+            const of = members(module);
+            if (of === undefined) return refuse(statement);
+            // `import urllib.parse` binds `urllib`, used only as `urllib.parse`.
+            const [top, next] = module.split(".");
+            if (alias) bound.set(alias, of);
+            else bound.set(top, members(top) ?? next);
+          }
+          return " ";
+        },
+      );
+  } else {
+    /** A module's import: each name bound to it, the members destructured, the member used. */
+    const use = (
+      statement: string,
+      at: string,
+      names: Array<string | undefined>,
+      list?: string,
+      member?: string,
+    ): string => {
+      const module = modules[Number(at)].replace(/^node:/, "");
+      const of = members(module);
+      if (of === undefined) return refuse(statement);
+      if (member !== undefined) return allows(of, member) ? " " : refuse(statement);
+      for (const name of names) if (name && !module.endsWith(".json")) bound.set(name, of);
+      for (const item of list?.split(",") ?? []) {
+        const key = item.trim().split(/\s*(?::|\bas\b|=)\s*/)[0];
+        if (key && (!/^[\w$]+$/.test(key) || !allows(of, key))) return refuse(statement);
+      }
+      // `require('fs')` passed whole (`Object.values(require('fs'))`) reaches every member.
+      return of && !names.some(Boolean) && list === undefined ? refuse(statement) : " ";
+    };
+    rest = rest
+      .replace(
+        /(?<![\w$.])import\s*(?:([\w$]+)\s*,?\s*)?(?:\*\s*as\s+([\w$]+)\s*|\{([^{}]*)\}\s*)?(?:from\s*)?«(\d+)»/g,
+        (statement, name?: string, all?: string, list?: string, at = "") =>
+          use(statement, at, [name, all], list),
+      )
+      .replace(
+        /(?:(?<![\w$.])(?:(?:const|let|var)\s+)?(?:([\w$]+)|\{([^{}]*)\})\s*=\s*(?:await\s+)?)?(?<![\w$.])(?:require|import)\s*\(\s*«(\d+)»\s*\)(?:\s*\.\s*([\w$]+))?/g,
+        (statement, name?: string, list?: string, at = "", member?: string) =>
+          use(statement, at, [name], list, member),
+      );
+  }
+  // An import or require left over is one Workit cannot read (`require(x)`, `__import__`, `import(\`…\`)`).
+  const left = /(?<![\w$.])(?:require|import|__import__)(?![\w$])[^;\n]{0,24}/.exec(rest);
+  if (left) refuse(left[0]);
+  const ambient = python
+    ? AMBIENT.py.exec(rest)
+    : (AMBIENT.js.exec(rest) ?? AMBIENT.raw.exec(text));
+  if (ambient) refuse(ambient[0]);
+  // Node's `-e` code has every builtin module as a global (`child_process.execSync(…)`), and
+  // `process` and `Bun`: each is used only through its members ("-": none).
+  if (!python)
+    for (const name of [...builtinModules, "Bun"])
+      if (
+        /^[A-Za-z_]\w*$/.test(name) &&
+        name !== "console" &&
+        !bound.has(name) &&
+        !NODE_WHOLE.has(name)
+      )
+        bound.set(name, MEMBERS[name] ?? "-");
+  for (const [name, of] of bound)
+    for (const use of rest.matchAll(
+      new RegExp(
+        `(?<![\\w$.])${name.replaceAll("$", "\\$")}(?![\\w$])(?:\\s*\\.\\s*([\\w$]+))?`,
+        "g",
+      ),
+    ))
+      if (use[1] === undefined || !allows(of, use[1])) refuse(use[0]);
+  return why;
+};
+
+/**
+ * A `.replace(` that may rename a path: anything but a string's two or three
+ * plain positional arguments (`old, new[, count]`; `count=` named), so
+ * `Path(p).replace(q)`, `.replace(q,)`, `.replace(target=q)` and `.replace(*a, *b)` count.
+ */
+const renames = (code: string): boolean =>
+  [...code.matchAll(/\.replace\s*\(/g)].some(({ index, 0: call }) => {
+    const given = [""];
+    for (let at = index + call.length, depth = 0; at < code.length; at++) {
+      const char = code[at];
+      if (!depth && char === ")") break;
+      if (!depth && char === ",") given.push("");
+      else {
+        depth += "([{".includes(char) ? 1 : ")]}".includes(char) ? -1 : 0;
+        given[given.length - 1] += char;
+      }
+    }
+    const used = given.map((text) => text.trim());
+    if (used.length > 1 && !used.at(-1)) used.pop();
+    return !(
+      used.length >= 2 &&
+      used.length <= 3 &&
+      used.every(
+        (text, at) =>
+          text &&
+          !text.startsWith("*") &&
+          (!/^\w+\s*=(?![=>])/.test(text) || (at === 2 && /^count\s*=/.test(text))),
+      )
+    );
+  });
+
+/**
+ * A call on what an expression returns (`Object.values(fs).find(…)(…)`,
+ * `(0, f)(…)`): a call reached by a computed name. A function literal called
+ * at once (`(() => …)()`, `(async function () { … })()`, `(lambda: …)()`) is not.
+ */
+const callsResult = (code: string): boolean =>
+  [...code.matchAll(/\)\s*\(/g)].some(({ index }) => {
+    let at = index;
+    for (let depth = 0; at >= 0; at--) {
+      depth += code[at] === ")" ? 1 : code[at] === "(" ? -1 : 0;
+      if (!depth) break;
+    }
+    // A call's own result (`f(…)(…)`), or a group other than a function literal.
+    return (
+      /[\w$\])]\s*$/.test(code.slice(0, Math.max(at, 0))) ||
+      !/^\(\s*(?:async\b|function\b|lambda\b|\(?[\w$,\s]*\)?\s*=>)/.test(code.slice(at))
+    );
+  });
+
+/**
+ * Why inline Python or Node code (`code`; else an option, argument or assignment it is given)
+ * may change files, or null: SPAWNS, strings or calls Workit cannot read, code that reaches past
+ * the modules it reads (`unread`), a `.replace(` that may rename a path (`renames`), or a word
+ * left by `strip` that names a call in MUTATING_CALLS (bar a list's `append` and `copy`).
+ */
+const writesIn = (text: string, python = false, code = true): string | null => {
+  const modules: string[] = [];
+  const bare = strip(text, python, modules);
+  const spawns = SPAWNS.exec(text)?.[0];
+  const word = [...bare.matchAll(/[\w$]+/g)].find(
+    ([name]) => !/^(?:append|copy)$/.test(name) && MUTATING_CALLS.test(name),
+  )?.[0];
+  // Fail closed where the strings cannot be told apart: a quote or backtick left over (an
+  // f-string or template literal with nested braces, a regex literal holding one) or a `\u`
+  // or `\x` escape.
+  return spawns !== undefined
+    ? `\`${spawns}\` may run code or change files`
+    : /['"`]/.test(bare) || /\\[ux]/.test(text) || callsResult(bare)
+      ? "Workit cannot read its strings or a call on a returned value"
+      : ((code ? unread(bare, modules, python, text) : null) ??
+        (renames(bare)
+          ? "`.replace(` may rename a path"
+          : word === undefined
+            ? null
+            : `\`${word}\` may change files`));
+};
+
+/** Why the inline code an analysis read first was judged a writer, by target list (`inlineWhy`). */
+const REASONS = new WeakMap<readonly string[], string>();
+let noted: string | undefined;
 
 /** Calls that only build a path: the value they return may reach any later call. */
 const PATH_CALLS =
@@ -375,11 +708,8 @@ const unwrapped = (words: readonly string[]): string[] | null => {
   for (
     let takes: string | undefined;
     (takes = WRAPPERS[words[at]?.split(/[\\/]/).at(-1) ?? ""]) !== undefined;
-  ) {
-    at++;
-    while (at < words.length && /^-|^\w+=|^\d[\w.]*$/.test(words[at]))
-      at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
-  }
+  )
+    at = pastOptions(words, at + 1, takes, true);
   return at ? words.slice(at) : null;
 };
 
@@ -422,18 +752,18 @@ const opaqueWrites = (
   input: readonly string[],
   scriptOf: (index: number) => string | undefined = (index) => input[index],
   fed?: string | null,
+  loads = false,
 ): string[] | null => {
-  let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) {
-    if (words[0] === "xargs") {
-      let at = 1;
-      while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
-      return runsWriter(words.slice(at)) ? ["."] : null;
-    }
-    words = words.slice(1);
+  const words = pastLead(input);
+  if (words[0] === "xargs") {
+    let at = 1;
+    while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
+    return runsWriter(words.slice(at)) ? ["."] : null;
   }
   const [verb, ...args] = words;
   const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+  // Wrappers whose command Workit does not follow (a lock file first, a remote host, a typescript).
+  if (/^(?:flock|watch|ssh|parallel|script|su|runuser|strace)$/.test(name)) return ["."];
   const files = operands(args);
   const has = (pattern: RegExp) => args.some((arg) => pattern.test(arg));
   const listed = (named: string[]) => (named.length ? named : ["."]);
@@ -465,19 +795,56 @@ const opaqueWrites = (
     const end = args.findIndex((arg) => /^[-(!]/.test(arg));
     return writes ? listed(end < 0 ? args : args.slice(0, end)) : null;
   }
-  if (/^g?awk$/.test(name)) {
-    if (!has(/^-i|^--include/)) return null;
+  if (/^[gmn]?awk$/.test(name)) {
     const named: string[] = [];
-    let program = !has(/^-f$|^--file/);
+    const file = has(/^-f$|^--file/);
+    let program: string | undefined;
     for (let index = 0; index < args.length; index++)
-      if (/^(?:-[ifvF]|--(?:include|file|assign|field-separator))$/.test(args[index])) index++;
+      if (/^(?:-[ifvFe]|--(?:include|file|assign|field-separator|source))$/.test(args[index]))
+        program = /^-e$|^--source$/.test(args[index++]) ? args[index] : program;
       else if (args[index].startsWith("-")) continue;
-      else if (program) program = false;
+      else if (program === undefined && !file) program = args[index];
       else named.push(args[index]);
-    return listed(named);
+    // In place it writes its files; a program file, `system`, a print to a file or a pipe, or a
+    // command's `| getline` may write anywhere.
+    if (has(/^-i|^--include/)) return listed(named);
+    return file || /system|printf?[^;}\n]*[>|]|\|&?\s*getline/.test(program ?? "")
+      ? [".", ...pathsIn(program ?? "")]
+      : null;
+  }
+  if (name === "sed") {
+    const scripts: string[] = [];
+    let first: string | undefined;
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index];
+      // A script file runs commands Workit does not read.
+      if (/^-[nErsuz]*f|^--file/.test(arg)) return ["."];
+      if (/^-[nErsuz]*e$|^--expression$/.test(arg)) scripts.push(args[++index] ?? "");
+      else if (arg.startsWith("--expression=")) scripts.push(arg.slice(13));
+      else if (/^-l$|^--line-length$/.test(arg)) index++;
+      else if (!arg.startsWith("-")) first ??= arg;
+    }
+    if (!scripts.length && first !== undefined) scripts.push(first);
+    // Past `s///` (its `w` or `e` flag kept), `y///` and `/regex/` addresses, a `w`, `W` or `e`
+    // command writes a file or runs one.
+    const writes = scripts.some((script) =>
+      /[wWe]/.test(
+        script
+          .replace(
+            /s(.)(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1([^;}\n]*)/g,
+            (_, _at: string, flags: string) => (/[we]/.test(flags) ? "w" : ""),
+          )
+          .replace(/y(.)(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1/g, "")
+          .replace(/\\(.)(?:\\.|(?!\1)[^\\\n])*\1|\/(?:\\.|[^/\\\n])*\//g, ""),
+      ),
+    );
+    if (writes) return [".", ...scripts.flatMap(pathsIn)];
   }
   const inline = (flag: RegExp): string[] | null => {
-    const at = args.findIndex((arg) => flag.test(arg));
+    // Node runs the last `-e`/`-p` and reads its options anywhere (`-e <code> -r ./f.js`); Python
+    // runs the first `-c` and passes the rest as arguments. Every one counts.
+    const codes = args.flatMap((arg, at) => (flag.test(arg) ? [at] : []));
+    const at = codes[0] ?? -1;
     // No inline flag: the script is a file, or the heredoc it reads on stdin (`python3 - <<'EOF'`).
     if (
       at < 0 &&
@@ -488,15 +855,35 @@ const opaqueWrites = (
     // The script, the interpreter's options and arguments, and the environment
     // it is given (`X=/p node -e …`, `NODE_OPTIONS=--require …`).
     const texts = input.map((word, index) =>
-      index === runs || (index < runs && !/^\w+=/.test(word)) ? "" : scriptOf(index),
+      index === runs || (index < runs && !/^\w+\+?=/.test(word)) ? "" : scriptOf(index),
     );
-    // Python or Node code with no call that writes, deletes or runs a command changes nothing.
-    return /^(?:python[\d.]*|node|bun)$/.test(name) &&
-      // The code, the environment and the options before it (`-r`, `--import` load code).
-      [
-        at < 0 ? fed : texts[runs + at + 2],
-        ...texts.slice(0, runs + 1 + (at < 0 ? args.length : at)),
-      ].every((text) => text !== undefined && text !== null && !writesIn(text))
+    // `--eval=<code>` holds its code; `-e <code>` is followed by it.
+    const joined = (index: number) => args[index].includes("=");
+    const code = new Set(codes.map((index) => runs + index + (joined(index) ? 1 : 2)));
+    const python = name.startsWith("py");
+    let why: string | null = null;
+    // Python or Node code with no call that writes, deletes or runs a command changes nothing,
+    // unless the command sets a loader (`export NODE_OPTIONS=…` before it).
+    if (loads || !/^(?:python[\d.]*|node|bun)$/.test(name)) why = "";
+    // The code, then the environment and the options (before Python's code; anywhere for Node).
+    const given = [
+      ...(at < 0 ? [fed] : []),
+      ...codes.map((index) =>
+        joined(index) ? texts[runs + index + 1]?.replace(/^[^=]*=/, "") : texts[runs + index + 2],
+      ),
+    ];
+    for (const [index, text] of [
+      ...given,
+      ...texts
+        .slice(0, runs + 1 + (at < 0 || !python ? args.length : at))
+        .filter((_, place) => !code.has(place)),
+    ].entries())
+      why ??=
+        text === undefined || text === null
+          ? "Workit cannot read its code"
+          : writesIn(text, python, index < given.length);
+    if (why) noted ??= why;
+    return why === null
       ? null
       : [
           ".",
@@ -508,14 +895,23 @@ const opaqueWrites = (
   };
   if (name === "curl") return curlOutputs(args);
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
-  // A module (`python3 -m pip install --target …`) runs code Workit does not read.
+  // A module (`python3 -m pip install --target …`, `-mpip`, `-Im pip`) runs code Workit does not read.
   if (
     name.startsWith("python") &&
-    args.some((arg, at) => arg === "-m" && args[at + 1] !== "json.tool")
+    args.some(
+      (arg, at) =>
+        /^-[^-m]*m/.test(arg) &&
+        ((arg.replace(/^-[^-m]*m/, "") || args[at + 1]) !== "json.tool" ||
+          // `json.tool <in> <out>` writes <out>.
+          operands(args.slice(at + (arg.length > 2 ? 1 : 2))).filter((word) => !/^\d+$/.test(word))
+            .length > 1),
+    )
   )
     return [".", ...args.flatMap(pathsIn)];
-  if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
-    return inline(/^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/);
+  // `deno eval`, `tsx -e` and `ts-node -e` run code like `ruby -e`: always a writer.
+  if (name === "deno" && operands(args)[0] === "eval") return ["."];
+  if (/^(?:python[\d.]*|node|bun|deno|ruby|php|tsx|ts-node)$/.test(name))
+    return inline(INLINE_CODE);
   return shellScript(words) === null ? null : ["."];
 };
 
@@ -1007,21 +1403,28 @@ const placeholderIn = (dir: string, name: string): string => {
 /** `make()`'s target list, with the placeholders made while it ran recorded for it. */
 const recording = (make: () => string[]): string[] => {
   const outer = collecting;
+  const before = noted;
   const found = new Set<string>();
   collecting = found;
+  noted = undefined;
   try {
     const targets = make();
     PLACEHOLDERS.set(targets, found);
+    if (noted !== undefined) REASONS.set(targets, noted);
     for (const target of found) outer?.add(target);
     return targets;
   } finally {
     collecting = outer;
+    noted = before ?? noted;
   }
 };
 
 /** The placeholders (not files a command names) in a list `shellMutationTargets` or `liveTargets` returned. */
 export const placeholdersOf = (targets: readonly string[]): ReadonlySet<string> =>
   PLACEHOLDERS.get(targets) ?? new Set();
+
+/** Why the first inline script in a list `shellMutationTargets` returned counts as a writer. */
+export const inlineWhy = (targets: readonly string[]): string | undefined => REASONS.get(targets);
 
 /**
  * For an implementer's confinement: a placeholder file name, then the command's
@@ -1128,7 +1531,7 @@ const DECLARERS = new Set(["export", "declare", "typeset", "local", "readonly"])
 
 /** The `NAME=value` assignments a segment makes to the shell itself (alone, or after `export`). */
 const assignmentsOf = (words: readonly string[]): Array<[string, string]> => {
-  const first = words.findIndex((word) => !/^\w+=/.test(word));
+  const first = words.findIndex((word) => !/^\w+\+?=/.test(word));
   const named =
     first < 0
       ? words
@@ -1238,7 +1641,7 @@ const untrustedVars = (
     }
     const words = segment.words.slice(start);
     // A changed IFS splits every expansion where it likes, except in a `read` it prefixes.
-    const at = words.findIndex((word) => !/^\w+=/.test(word));
+    const at = words.findIndex((word) => !/^\w+\+?=/.test(word));
     const ifs = (word: string) => /\bIFS\b/.test(word);
     if (
       segment.subs?.some(ifs) ||
@@ -1536,7 +1939,7 @@ const segmentTargets = (
       else loops.delete(name);
       continue;
     }
-    const lead = body.findIndex((word) => !/^\w+=/.test(word));
+    const lead = body.findIndex((word) => !/^\w+\+?=/.test(word));
     const words = lead < 0 ? [] : body.slice(lead);
     if (!segment.conditional && !untrusted.all)
       for (const [key, value] of assignmentsOf(segment.words))
@@ -1592,7 +1995,7 @@ const segmentTargets = (
       continue;
     }
     const literal =
-      depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(words) : null)) : null;
+      depth < 4 ? (wrappedScript(words) ?? (strict ? shellScript(pastLead(words)) : null)) : null;
     // `S='…'; bash -c "$S"`: the script a variable set in this command holds.
     const held = literal !== null && strict === "registry" ? expansions(literal, vars, loops) : [];
     const inner = held.length === 1 ? held[0] : literal;
@@ -1615,7 +2018,7 @@ const segmentTargets = (
     if (windows !== null && dir !== undefined)
       targets.push(...segmentTargets(dir, windows, "powershell", depth + 1, strict, vars));
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
-    const bare = strict === "registry" && depth < 4 ? unwrapped(words) : null;
+    const bare = strict && depth < 4 ? unwrapped(words) : null;
     if (bare?.length && dir !== undefined)
       targets.push(
         ...segmentTargets(
@@ -1693,9 +2096,16 @@ const segmentTargets = (
         shells.push(...preloads.flatMap(read));
       } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
-        const code = args.findIndex((arg) => /^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/.test(arg));
-        // As the shell expands it (`"…$HOME/…"`).
-        if (code >= 0) others.push(...expansions(args[code + 1] ?? "", vars, loops));
+        const code = args.findIndex((arg) => INLINE_CODE.test(arg));
+        // As the shell expands it (`"…$HOME/…"`); `--eval=<code>` holds it.
+        if (code >= 0)
+          others.push(
+            ...expansions(
+              args[code].includes("=") ? args[code] : (args[code + 1] ?? ""),
+              vars,
+              loops,
+            ),
+          );
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
         others.push(
           ...(named === undefined
@@ -1783,11 +2193,15 @@ const segmentTargets = (
           ? opaqueWrites(
               body,
               scriptOf,
-              // A heredoc's text, unless an unquoted one may expand a `$` or backtick in it.
+              // A heredoc's text, unless an unquoted one may expand a `$` or backtick in it;
+              // an unquoted one joins a backslash-newline (`os.sys\⏎tem`).
               stdin &&
-                (/[$`]/.test(stdin) && /<<-?[ \t]*[^'"\\\s]/.test(command.replaceAll("\\\n", ""))
-                  ? null
+                (/<<-?[ \t]*[^'"\\\s]/.test(command.replaceAll("\\\n", ""))
+                  ? /[$`]/.test(stdin)
+                    ? null
+                    : stdin.replaceAll("\\\n", "")
                   : stdin),
+              /\b(?:NODE_OPTIONS|PYTHON[A-Z]+)\b/.test(command),
             )
           : null;
       // Named by the command it runs, past wrappers such as `env` or `sudo`.
@@ -1815,6 +2229,30 @@ const segmentTargets = (
                   ? placeholderIn(path.dirname(resolved), path.basename(resolved))
                   : resolved,
             );
+      // A shell or `source` reading its script on stdin (`bash <<'EOF'`, `sh -s`, `. /dev/stdin
+      // <<EOF`) runs the heredoc, and `eval` runs its words: each is read like the command itself,
+      // as a judge's is. A script from a process substitution (`bash <(…)`) is text Workit cannot see.
+      const [shell = "", ...shellArgs] = pastLead(words);
+      const verb = (shell.split(/[\\/]/).at(-1) ?? "").toLowerCase();
+      const named =
+        (SCRIPT_SHELLS.has(verb) || verb === "source" || verb === ".") &&
+        shellScript([verb, ...shellArgs]) === null
+          ? (scriptArgs(verb, shellArgs).named ?? "")
+          : null;
+      if (depth < 4 && verb === "eval")
+        targets.push(
+          ...segmentTargets(runIn, shellArgs.join(" "), dialect, depth + 1, strict, vars),
+        );
+      else if (named !== null && /^<\(|^\/dev\/fd\/[1-9]/.test(named))
+        targets.push(placeholderIn(runIn, `${OPAQUE_TARGET}${verb}`));
+      else if (
+        depth < 4 &&
+        segment.stdin &&
+        named !== null &&
+        /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)?$/.test(named)
+      )
+        for (const script of segment.stdin)
+          targets.push(...segmentTargets(runIn, script, dialect, depth + 1, strict, vars));
       const ln = words.findIndex((word) => /^ln$/i.test(word.split(/[\\/]/).at(-1) ?? ""));
       const lnArgs = words.slice(ln + 1);
       // A hard link is a second name for its source. The registry guard judges every

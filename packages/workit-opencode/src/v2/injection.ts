@@ -96,9 +96,11 @@ const judgeVerdictText = (
 ): string | null => {
   const role = workerRole(workerContext);
   if (role === "implementer") return null;
+  const cwd = session.directory ?? root;
   const line = verdictCommand({
-    branch: judgeBranch(session.directory ?? root),
+    branch: judgeBranch(cwd),
     judge: role === "reviewer" ? "reviewer" : null,
+    cwd,
   });
   return `If this session verifies or reviews a candidate, record its verdict with exactly this command (pick the result and kind, live when you drove the real surface, name the candidate branch if it differs, say what you ran): \`${line}\`. Your shell already acts as your own Workit session ${childSessionId(session.parentID ?? "", session.id)}: pass no --session or --token, and never set WORKIT_SESSION_ID by hand.`;
 };

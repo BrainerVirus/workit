@@ -45,6 +45,7 @@ import {
 import { segmentsOf, type ShellDialect } from "./shell-words";
 import {
   configWrites,
+  inlineWhy,
   OPAQUE_TARGET,
   placeholdersOf,
   plainFetch,
@@ -519,12 +520,12 @@ const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php)$/;
 const FED = /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$|^<\(/;
 /** Words before the command they run (`env -i`, `sudo -u me`, `builtin`, `then`). */
 const LEADS =
-  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|timeout|stdbuf|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+=.*|[-\d].*)$/s;
+  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|ionice|chrt|taskset|setsid|timeout|stdbuf|npx|bunx|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+\+?=.*|[-\d].*)$/s;
 /** Commands a judge's refusal reads (a lead's option value is never one of them). */
 const RUNS =
   /^(?:sh|bash|zsh|dash|ksh|mksh|ash|python[\d.]*|node|bun|deno|ruby|perl|php|eval|source|\.|workit)$/;
 /** Interpreter options that run an inline script, a module, or nothing (help, version, `--test`). */
-const INLINE = /^-[a-zA-Z]*[ceEpm]$|^--(?:eval|print|test|version|help)$|^-[hvV]$/;
+const INLINE = /^-[a-zA-Z]*[ceEpm]$|^--(?:eval|print)(?:=|$)|^--(?:test|version|help)$|^-[hvV]$/;
 /** Interpreter options that take the next word. */
 const VALUED = /^-[WXIrC]$|^--(?:require|import|loader|conditions|input-type)$/;
 
@@ -1051,7 +1052,7 @@ const judgeRefusal = (command: string, fed: string[], depth = 0): string | null 
     // An environment that makes a later interpreter load code (`export NODE_OPTIONS=-r x`), or a
     // name the shell sets itself, so its value is not the one written (`REPLY=x; read; … $REPLY`).
     const set = words.find((word) =>
-      /^(?:NODE_OPTIONS|PYTHON(?:STARTUP|PATH|HOME)|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|LD_\w+|DYLD_\w+|REPLY|OPTARG|OPTIND|MAPFILE|READLINE_\w+|S?RANDOM|SECONDS|LINENO|E?UID|PPID|OLDPWD|_|HOSTNAME|HISTCMD|EPOCH\w*)=/.test(
+      /^(?:NODE_OPTIONS|PYTHON(?:STARTUP|PATH|HOME)|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|LD_\w+|DYLD_\w+|REPLY|OPTARG|OPTIND|MAPFILE|READLINE_\w+|S?RANDOM|SECONDS|LINENO|E?UID|PPID|OLDPWD|_|HOSTNAME|HISTCMD|EPOCH\w*)\+?=/.test(
         word,
       ),
     );
@@ -1140,6 +1141,7 @@ const judgeDeny = (
   what: string,
   target?: string,
   retry?: (scratch: string) => string | null | undefined,
+  why = "write only there (mkdir -p it); a fix the candidate needs is a finding (`workit finding record`).",
 ): HookDecision => {
   const role = input.session.agentType?.endsWith("reviewer") ? "reviewer" : "verifier";
   const root = checkoutOf(input.cwd)?.root;
@@ -1155,7 +1157,7 @@ const judgeDeny = (
   const call = root ? retry?.((other ?? path.join(root, SCRATCH)).replaceAll("\\", "/")) : null;
   const unblock = call
     ? `Retry as: ${call}`
-    : "Why: write only there (mkdir -p it); a fix the candidate needs is a finding (`workit finding record`).";
+    : `Why: ${why.replaceAll("<scratch>", other ?? (root ? path.join(root, SCRATCH) : SCRATCH))}`;
   return {
     kind: "deny",
     reason: `workit scratch confinement: ${role} ${input.session.agentId} may write only in its scratch dir ${scratch}, and ${what}.\n${unblock}`,
@@ -1191,6 +1193,7 @@ export function confineJudge(
   targets: readonly string[],
   placeholders: ReadonlySet<string> = placeholdersOf(targets),
   command?: string,
+  why = inlineWhy(targets),
 ): HookDecision {
   try {
     if (!input.session.agentId) return NONE;
@@ -1231,18 +1234,29 @@ export function confineJudge(
       )
         continue;
       const runner = runnerAt(target);
+      // Inline code that reaches past what Workit reads: the reason, and a retry from scratch
+      // only when the script names no relative path (from scratch it would read another file).
+      const inline = runner !== null && INTERPRETERS.test(runner) && why ? why : undefined;
+      const relative =
+        inline !== undefined &&
+        /(?<![\w/~$.-])(?:\.{1,2}\/|[\w-]+(?:\/[\w.-]+)*\.(?:json|[cm]?[jt]sx?|py|ya?ml|toml|txt|md|lock|cfg|ini|csv|xml|html?)(?![\w(]))/.test(
+          command ?? "",
+        );
       return judgeDeny(
         input,
         runner === null
           ? `${shown(target)} is outside it`
-          : `\`${runner}\` runs in ${shown(target)}, outside it`,
+          : `\`${runner}\` runs in ${shown(target)}, outside it${inline ? `, and ${inline}` : ""}`,
         target,
         (dir) =>
-          !command || runsGit
+          !command || runsGit || relative
             ? null
             : runner === null
               ? movedInto(command, input.cwd, target, dir)
               : runFrom(dir, command),
+        relative
+          ? "read with cat, jq, grep or the Read tool, or keep to json/re/pathlib/fs reads; a script that needs more goes in a file in <scratch>."
+          : undefined,
       );
     }
     return NONE;
@@ -1378,6 +1392,7 @@ export function confineJudgeShell(
       [...lists.flat(), ...git],
       new Set([...git, ...lists.flatMap((list) => [...placeholdersOf(list)])]),
       command,
+      lists.map(inlineWhy).find(Boolean),
     );
   } catch {
     return NONE;

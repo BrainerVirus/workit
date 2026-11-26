@@ -831,7 +831,7 @@ test("direct-child reviewer and implementer contexts are exact and lineage-bound
     const verdict = /<workit-verdict-line>[^<]*`(workit ledger verdict [^`]*)`/u;
     const line = verdict.exec(reviewer)?.[1] ?? "";
     expect(line).toMatch(
-      /^workit ledger verdict <verified\|failed\|blocked> --kind review --branch \S+ --how /u,
+      /^workit ledger verdict <verified\|failed\|blocked> --cwd \S+ --kind review --branch \S+ --how /u,
     );
     expect(line).not.toContain("--session");
     expect(line).not.toContain("--token");

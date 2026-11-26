@@ -338,6 +338,21 @@ export const segmentsOf = (command: string, dialect: ShellDialect = "posix"): Se
   }
 };
 
+/** Whether the next word is still `env`'s: after `env` and only its options and assignments. */
+const afterEnv = (words: readonly string[]): boolean => {
+  const at = words.map((word) => word.split(/[\\/]/).at(-1)).lastIndexOf("env");
+  return (
+    at >= 0 &&
+    words
+      .slice(at + 1)
+      .every(
+        (word, index, rest) =>
+          /^-|=/.test(word) ||
+          /^-[^-]*[uCS]$|^--(?:unset|chdir|split-string)$/.test(rest[index - 1] ?? ""),
+      )
+  );
+};
+
 const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
   const posix = dialect === "posix";
   const segments: Segment[] = [];
@@ -362,6 +377,10 @@ const tokenize = (command: string, dialect: ShellDialect): Segment[] => {
     else if (pending === "input") (current.inputs ??= []).push(text);
     else {
       const at = current.words.length;
+      // `env` sets any `NAME=value` word before its command, whatever the name (`env 'A b=1' rm`):
+      // the name is respelled as a word, so every reader skips it as an assignment.
+      if (/^[^=-][^=]*=/.test(word) && afterEnv(current.words))
+        word = word.replace(/^[^=]*/, (name) => name.replace(/\W/g, "_"));
       current.words.push(...(MARKERS.test(word) ? expandBraces(word) : [word]));
       if (expanding || (!posix && word.startsWith("@")))
         (current.expands ??= []).push(...current.words.slice(at).map((_, i) => at + i));

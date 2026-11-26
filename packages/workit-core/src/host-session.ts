@@ -237,14 +237,15 @@ const shellQuote = (value: string): string =>
  * The exact verdict command a verifier or reviewer runs, filled in (#271
  * S2a). `--token=` keeps a token from ever parsing as a flag. Hosts whose
  * child shell carries its own session (OpenCode, Pi) pass no session.
- * `--kind` is always named: left out, the CLI records `review`.
+ * `--kind` is always named: left out, the CLI records `review`. `--cwd` is
+ * always named too, so the verdict lands in the judged checkout from any shell.
  */
 export function verdictCommand(options: {
   branch: string | null;
   judge: "verifier" | "reviewer" | null;
   session?: string | null;
   token?: string | null;
-  /** The checkout the hook ran in: named so a judge whose shell is elsewhere files it there. */
+  /** The checkout the hook ran in: named so a judge whose shell is elsewhere files it there (unknown: a placeholder). */
   cwd?: string | null;
 }): string {
   const kind =
@@ -255,7 +256,7 @@ export function verdictCommand(options: {
         : "<live|unit|review>";
   return [
     "workit ledger verdict <verified|failed|blocked>",
-    options.cwd ? `--cwd ${shellQuote(options.cwd)}` : null,
+    `--cwd ${options.cwd ? shellQuote(options.cwd) : "<candidate worktree>"}`,
     `--kind ${kind}`,
     `--branch ${options.branch ?? "<branch>"}`,
     options.session ? `--session ${options.session}` : null,

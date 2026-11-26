@@ -245,12 +245,9 @@ test("Given a verifier, When it runs git remote get-url, range-diff or worktree 
   ]);
 });
 
-// #880 stays open (decider, review mwmaow76): the read-only one-liners it lists keep their base
-// verdict, denied, and the inline-script reading is unchanged; only `node --print` and
-// `python -m <module>` are judged now. Two forms are still allowed as on base, tracked by #880:
-// `os.sys\<newline>tem(…)` in an unquoted heredoc and a pandas writer reached through an alias.
-test("Given the one-liners #880 lists and writes hidden in inline code, When a judge runs them, Then each is denied as on base; a heredoc that only reads still runs", () => {
-  denied(verifier, [
+// #880: the read-only one-liners it lists run; the writes hidden in inline code stay denied.
+test("Given the one-liners #880 lists and writes hidden in inline code, When a judge runs them, Then each one-liner runs and each write is denied; a heredoc that only reads still runs", () => {
+  allowed(verifier, [
     `python3 -c "x=1; print(f'x={x}')"`,
     "python3 - <<'EOF'\n# the candidate's version\nimport json\nprint(json.load(open('package.json'))['version'])\nEOF",
     "node -e 'const p = require(\"./package.json\"); console.log(`${p.name}@${p.version}`)'",
@@ -258,6 +255,9 @@ test("Given the one-liners #880 lists and writes hidden in inline code, When a j
     `python3 -c "from pathlib import Path; p = 'package.json'; print(Path(p).read_text().replace('a','b'))"`,
     `python3 -c "print((5).to_bytes(2,'big'))"`,
     `node -e "console.log(new Map().delete(1))"`,
+    "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
+  ]);
+  denied(verifier, [
     `python3 -c "print(f'{open(p, m)}')"`,
     'node -e \'console.log(`${require("fs").rmSync("x")}`)\'',
     `python3 -c "print('\`'); open('x','w'); print('\`')"`,
@@ -267,9 +267,6 @@ test("Given the one-liners #880 lists and writes hidden in inline code, When a j
     `node --print "require('fs').writeFileSync('x','y')"`,
     "python3 -m pip install --target /tmp/x foo",
     `export NODE_OPTIONS=--require=/tmp/e.js; node -e "1"`,
-  ]);
-  allowed(verifier, [
-    "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
   ]);
 });
 
@@ -465,4 +462,107 @@ test("Given review mwmcj4in's probe9 forms, When a judge runs them, Then each is
     "git status",
     `git -C ${lead} status`,
   ]);
+});
+
+// #956 round 3: inline code may import only the modules Workit reads, so the read-only forms
+// agents write must keep running: #880's one-liners, the rows verification mwwyoapt allowed and
+// one line per module in the tables, for a judge and an implementer outside its worktree.
+const MUST_ALLOW = [
+  // #880
+  `python3 -c "x=1; print(f'x={x}')"`,
+  "python3 - <<'EOF'\nimport json\n# the candidate's version\nprint(json.load(open('package.json'))['version'])\nEOF",
+  "node -e 'const p = require(\"./package.json\"); console.log(`${p.name}@${p.version}`)'",
+  `python3 -c "a = [1, 2]; print(len(a) / 2, 'half')"`,
+  `python3 -c "from pathlib import Path; p = 'package.json'; print(Path(p).read_text().replace('a','b'))"`,
+  `python3 -c "print((5).to_bytes(2,'big'))"`,
+  `node -e "console.log(new Map().delete(1))"`,
+  "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
+  // Verification mwwyoapt's allowed rows.
+  `node -e "process.stdout.write('x')"`,
+  `node -e "process.stderr.write(String(1))"`,
+  `node -e "console.log(require('fs').readFileSync('package.json','utf8').replace(/a/g,'b'))"`,
+  `node -e "console.log(JSON.parse(require('fs').readFileSync(0,'utf8')).name)"`,
+  `python3 -c "import sys, json; print(json.load(sys.stdin)['name'])"`,
+  `python3 -c "import os; print(os.getcwd())"`,
+  `python3 -c "print('a'.replace('a','b'))"`,
+  `python3 -c "import re; print(re.sub('a','b','abc'))"`,
+  `node -e "console.log([1,2,3].map(x => x * 2).filter(Boolean).join(','))"`,
+  `python3 -c "import json,sys; d=json.load(open('package.json')); print(d.get('name', '').upper())"`,
+  `node -e "const o={a:1}; delete o.a; console.log(o)"`,
+  `node -e "const m=new Map(); m.set(1,2); m.delete(1)"`,
+  `python3 -c "d={}; d.pop('a', None); print(d)"`,
+  `python3 -c "import datetime; print(datetime.datetime.now().isoformat())"`,
+  `python3 -c "import urllib.parse; print(urllib.parse.quote('a b'))"`,
+  `python3 -c "import sys; print(sys.argv[1:])" a b`,
+  `python3 -c "print(f'{1+1=}')"`,
+  // One line per module in the tables.
+  `python3 -c "import json, re, math; print(json.dumps({'a': re.sub('a', 'b', 'a'), 'm': math.pi}))"`,
+  `python3 -c "import collections, itertools, functools; print(collections.Counter('aab'), functools.reduce(max, itertools.chain([1], [2])))"`,
+  `python3 -c "import datetime, time; print(datetime.date.today(), time.time())"`,
+  `python3 -c "import hashlib, base64; print(hashlib.sha256(b'a').hexdigest(), base64.b64encode(b'a'))"`,
+  `python3 -c "import glob, fnmatch; print(glob.glob('*.json'), fnmatch.fnmatch('a.ts', '*.ts'))"`,
+  `python3 -c "import csv, io, string; print(list(csv.reader(io.StringIO('a,b'))), string.ascii_letters)"`,
+  `python3 -c "import textwrap, statistics, difflib, shlex; print(textwrap.dedent(' a'), statistics.mean([1, 2]), difflib.SequenceMatcher(None, 'a', 'b').ratio(), shlex.split('a b'))"`,
+  `python3 -c "import pprint, typing, ast; pprint.pprint(ast.literal_eval('[1]')); print(typing.Any)"`,
+  `python3 -c "import tomllib, yaml, configparser; print(tomllib.loads('a = 1'), yaml.safe_load('a: 1'), configparser.ConfigParser().sections())"`,
+  `python3 -c "import pathlib; print(pathlib.Path('package.json').read_text())"`,
+  `python3 -c "from pathlib import Path; print(sorted(p.name for p in Path('.').iterdir()))"`,
+  `python3 -c "import urllib.parse; print(urllib.parse.urlparse('http://a/b').path)"`,
+  `python3 -c "import xml.etree.ElementTree as ET; print(ET.fromstring('<a/>').tag)"`,
+  `python3 -c "import os; print(os.path.join(os.getcwd(), 'a'), os.listdir('.'), os.environ.get('HOME'), os.getenv('HOME'), os.sep, os.linesep)"`,
+  `python3 -c "import os; print([e.name for e in os.scandir('.')], os.stat('.').st_size, [r for r, d, f in os.walk('.')])"`,
+  `python3 -c "import os.path; print(os.path.exists('package.json'))"`,
+  `python3 -c "from os import path, getcwd; print(path.basename(getcwd()))"`,
+  `python3 -c "from os.path import join, exists; print(exists(join('a', 'b')))"`,
+  `python3 -c "import sys; print(sys.version, sys.version_info, sys.platform, sys.path, sys.maxsize, sys.stdin, sys.stderr); sys.exit(0)"`,
+  `python3 -c "import sys; sys.stdout.write('x')"`,
+  `python3 -c "import re; print(re.compile('a').findall('aa'))"`,
+  `python3 -c "from collections import Counter, defaultdict; print(Counter('a'), defaultdict(int))"`,
+  `python3 -c "import json as j; print(j.dumps(1))"`,
+  "python3 - <<'EOF'\nimport json\nfrom pathlib import Path\nfor p in Path('.').glob('*.json'):\n    print(p, json.loads(p.read_text()).get('name'))\nEOF",
+  `node -e "const path = require('path'); console.log(path.join('a', 'b'))"`,
+  `node -e "const os = require('node:os'); console.log(os.platform(), os.homedir())"`,
+  `node -e "const { URL } = require('url'); console.log(new URL('http://a/b').pathname)"`,
+  `node -e "const util = require('util'); console.log(util.inspect({ a: 1 }))"`,
+  `node -e "const crypto = require('crypto'); console.log(crypto.createHash('sha256').update('a').digest('hex'))"`,
+  `node -e "const assert = require('assert'); assert.ok(true)"`,
+  `node -e "const zlib = require('zlib'); console.log(zlib.gzipSync('a').length)"`,
+  `node -e "const qs = require('querystring'); console.log(qs.parse('a=1'))"`,
+  `node -e "const readline = require('readline'); console.log(typeof readline.createInterface)"`,
+  `node -e "const { Buffer } = require('buffer'); console.log(Buffer.from('a'))"`,
+  `node -e "const fs = require('fs'); console.log(fs.readFileSync('package.json', 'utf8'), fs.readdirSync('.'), fs.existsSync('x'))"`,
+  `node -e "const fs = require('node:fs'); console.log(fs.statSync('.').isDirectory(), fs.lstatSync('.').size, fs.realpathSync('.'), fs.constants.R_OK)"`,
+  `node -e "const { readFileSync, existsSync } = require('fs'); console.log(existsSync('package.json') && readFileSync('package.json', 'utf8'))"`,
+  `node -e "require('fs').promises.readFile('package.json', 'utf8').then(console.log)"`,
+  `node -e "const fsp = require('fs/promises'); fsp.readFile('package.json', 'utf8').then(console.log)"`,
+  `node -e "const { readdir } = require('node:fs/promises'); readdir('.').then(console.log)"`,
+  `node -e "console.log(process.argv, process.env.HOME, process.cwd(), process.platform, process.version, process.versions.node)"`,
+  `node -e "process.exitCode = 0"`,
+  `bun -e "console.log(await Bun.file('package.json').json())"`,
+  `bun -e "import fs from 'fs'; console.log(fs.readFileSync('package.json', 'utf8'))"`,
+  `bun -e "import { join } from 'node:path'; console.log(join('a', 'b'))"`,
+  `node -e "const p = require('./package.json'); for (const [k, v] of Object.entries(p.dependencies ?? {})) console.log(k, v)"`,
+  // awk and sed that only print.
+  "awk '{ print $1 }' package.json",
+  `awk -F: '{ printf "%s", $1 }' package.json`,
+  "awk 'NR > 1 { n++ } END { print n }' package.json",
+  "sed -n '1,5p' package.json",
+  "sed -n '/name/p' package.json",
+  "sed 's/a/b/g' package.json",
+  `sed -n 's/"name": "\\(.*\\)"/\\1/p' package.json`,
+  "sed -E 's/[0-9]+/N/g; s/x/y/' package.json",
+  // Running the candidate is the verifier's job: a script file or a package script stays allowed.
+  "node script.js",
+  "bun run test",
+];
+
+test("Given the must-allow corpus (#880, verification mwwyoapt's allowed rows, one line per module Workit reads), When a judge or an implementer outside its worktree runs it, Then each line runs", () => {
+  const corpus = MUST_ALLOW.filter(
+    (command) => process.platform !== "win32" || !command.includes("\\"),
+  );
+  allowed(verifier, corpus);
+  allowed(
+    implementer,
+    corpus.map((command) => `cd ${lead} && ${command}`),
+  );
 });
