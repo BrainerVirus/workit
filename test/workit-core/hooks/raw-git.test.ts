@@ -252,6 +252,20 @@ test("classification: chains, cd, -C, env prefixes, quoting and bash -c find the
     expect(classify(command) as unknown, command).toEqual(expected);
 });
 
+test("classification: BSD xargs -J puts the input where its word stands and -R takes a value, so the git under it is found", () => {
+  const rows = (command: string) => classify(command);
+  for (const command of [
+    "echo /lead | xargs -J % git -C % commit -m x",
+    "echo /lead | xargs -J% git -C % commit -m x",
+    "echo /lead | xargs -R 2 -I {} git -C {} commit -m x",
+  ])
+    expect(rows(command), command).toEqual([{ dir: "/lead", action: commit }]);
+  // No word matches the -J string: the input is appended, as without -J.
+  expect(rows("echo main | xargs -J % git push origin")).toEqual([
+    { dir: null, action: push(["main"], "origin") },
+  ]);
+});
+
 test("classification: PowerShell keeps backslashes as path separators and uses its own quoting", () => {
   expect(classify(String.raw`git -C C:\repo push origin main`, "powershell")).toEqual([
     { dir: String.raw`C:\repo`, action: push(["main"], "origin") },

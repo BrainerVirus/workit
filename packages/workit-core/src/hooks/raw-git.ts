@@ -274,9 +274,9 @@ const literalOutput = (segment: Segment | undefined): string | undefined => {
 const stdinOf = (segment: Segment, previous: Segment | undefined): string | undefined =>
   segment.stdin ? segment.stdin.join("\n") : literalOutput(previous);
 
-/** xargs options that take a value (`-n 1`, `-d '\n'`). */
+/** xargs options that take a value (`-n 1`, `-d '\n'`, BSD's `-R 2`). */
 const XARGS_VALUES = new Set(
-  ["-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "--arg-file", "--delimiter"].concat([
+  ["-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "-R", "--arg-file", "--delimiter"].concat([
     "--max-args",
     "--max-lines",
     "--max-procs",
@@ -287,12 +287,14 @@ const XARGS_VALUES = new Set(
 );
 
 /**
- * The commands `xargs …` runs: its command with the input appended, or
- * with `-I R` replaced per input line. Input that is not spelled out on
+ * The commands `xargs …` runs: its command with the input appended, with
+ * `-I R` replaced per input line, or with BSD's `-J R` word replaced by
+ * every input word at once. Input that is not spelled out on
  * the command line adds nothing, like a `$VAR` name it stays unjudged.
  */
 export const xargsCommands = (words: string[], input: string | undefined): string[][] => {
   let replace: string | null = null;
+  let insert: string | null = null;
   let index = 1;
   for (; index < words.length; index++) {
     const word = words[index];
@@ -302,6 +304,8 @@ export const xargsCommands = (words: string[], input: string | undefined): strin
     }
     if (!word.startsWith("-")) break;
     if (word === "-I") replace = words[++index] ?? "{}";
+    else if (word === "-J") insert = words[++index] ?? null;
+    else if (/^-J./.test(word)) insert = word.slice(2);
     else if (word === "--replace" || word === "-i") replace = "{}";
     else if (word.startsWith("--replace=")) replace = word.slice("--replace=".length);
     else if (/^-[Ii]./.test(word)) replace = word.slice(2);
@@ -310,7 +314,11 @@ export const xargsCommands = (words: string[], input: string | undefined): strin
   const command = words.slice(index);
   if (command.length === 0) return [];
   if (input === undefined) return [command];
-  if (replace === null) return [[...command, ...input.split(/\s+/).filter(Boolean)]];
+  const fed = input.split(/\s+/).filter(Boolean);
+  // BSD `-J R`: the first word that is exactly R takes every input word; none, they are appended.
+  const at = insert === null ? -1 : command.indexOf(insert);
+  if (at >= 0) return [[...command.slice(0, at), ...fed, ...command.slice(at + 1)]];
+  if (replace === null) return [[...command, ...fed]];
   const token = replace;
   return input
     .split("\n")
@@ -333,60 +341,132 @@ const findCommands = (words: string[]): string[][] => {
   return found;
 };
 
-/** PowerShell parameters that take a value; any other is a switch. */
-const POWERSHELL_VALUES =
-  /^-(?:f|file|ex|executionpolicy|wd|workingdirectory|config|configurationname|o|outputformat|if|inputformat|inp|w|windowstyle|settingsfile|custompipename|psconsolefile)$/;
+/**
+ * `pwsh` and Windows PowerShell parameters as each matches them: the full
+ * name, the shortest prefix it takes, exact aliases, and what it does.
+ * `script` runs the rest of the line (`-Command`) or the next word
+ * (`-CommandWithArgs`), `encoded` decodes it, `opaque` runs or loads code
+ * Workit does not read (a file, a settings or session config, a login
+ * profile, stdin after the script), `value` takes one word, `info` prints and
+ * exits, `switch` takes none.
+ */
+type PowershellParameter = {
+  name: string;
+  min: number;
+  aliases?: string[];
+  kind: "script" | "args" | "encoded" | "opaque" | "value" | "info" | "switch";
+  /** `pwsh` only, or Windows PowerShell only. */
+  host?: "pwsh" | "powershell";
+};
+const POWERSHELL_PARAMETERS: PowershellParameter[] = [
+  { name: "command", min: 1, kind: "script" },
+  { name: "commandwithargs", min: 8, aliases: ["cwa"], kind: "args", host: "pwsh" },
+  { name: "configurationname", min: 7, aliases: ["config"], kind: "opaque" },
+  { name: "configurationfile", min: 14, kind: "opaque", host: "pwsh" },
+  { name: "custompipename", min: 2, kind: "value", host: "pwsh" },
+  { name: "encodedcommand", min: 3, aliases: ["e", "ec"], kind: "encoded" },
+  { name: "encodedarguments", min: 8, aliases: ["ea"], kind: "opaque", host: "pwsh" },
+  { name: "executionpolicy", min: 2, aliases: ["ep"], kind: "value" },
+  { name: "file", min: 1, kind: "opaque" },
+  { name: "help", min: 1, aliases: ["?"], kind: "info" },
+  { name: "inputformat", min: 3, aliases: ["if"], kind: "value" },
+  { name: "interactive", min: 4, aliases: ["i"], kind: "switch", host: "pwsh" },
+  { name: "login", min: 1, kind: "opaque", host: "pwsh" },
+  { name: "mta", min: 3, kind: "switch" },
+  { name: "noexit", min: 3, kind: "opaque" },
+  { name: "nologo", min: 3, kind: "switch" },
+  { name: "noninteractive", min: 3, kind: "switch" },
+  { name: "noprofile", min: 3, kind: "switch" },
+  { name: "noprofileloadtime", min: 10, kind: "switch", host: "pwsh" },
+  { name: "outputformat", min: 1, aliases: ["of"], kind: "value" },
+  { name: "psconsolefile", min: 2, kind: "opaque", host: "powershell" },
+  { name: "settingsfile", min: 2, aliases: ["settings"], kind: "opaque", host: "pwsh" },
+  { name: "sshservermode", min: 2, aliases: ["sshs"], kind: "opaque", host: "pwsh" },
+  { name: "sta", min: 3, kind: "switch" },
+  { name: "version", min: 1, kind: "info", host: "pwsh" },
+  { name: "version", min: 1, kind: "value", host: "powershell" },
+  { name: "windowstyle", min: 1, kind: "value" },
+  { name: "workingdirectory", min: 2, aliases: ["wd"], kind: "value" },
+];
+
+/** What `pwsh`/`powershell` runs: the script text Workit reads, and whether it also runs code it cannot. */
+const powershellRun = (
+  words: string[],
+  stdin?: string,
+): { script: string | null; opaque: boolean } => {
+  const host = /powershell/i.test(words[0] ?? "") ? "powershell" : "pwsh";
+  let opaque = false;
+  for (let index = 1; index < words.length; index++) {
+    const word = words[index];
+    // Windows PowerShell runs its positional words as a command; `pwsh`'s is a script file.
+    if (!/^[-/]/.test(word))
+      return host === "powershell"
+        ? { script: words.slice(index).join(" "), opaque }
+        : { script: null, opaque: true };
+    const [, key = "", glued] = /^(?:--?|\/)([^:=]*)(?:[:=](.*))?$/s.exec(word) ?? [];
+    const flag = key.toLowerCase();
+    // A parameter PowerShell matches by its aliases or a long enough prefix; none, or two, is code
+    // Workit cannot place, so the rest is read as switches and the command counts as opaque.
+    const matches = POWERSHELL_PARAMETERS.filter(
+      (parameter) =>
+        (parameter.host ?? host) === host &&
+        flag !== "" &&
+        (parameter.aliases?.includes(flag) ||
+          (flag.length >= parameter.min && parameter.name.startsWith(flag))),
+    );
+    if (matches.length !== 1) {
+      opaque = true;
+      continue;
+    }
+    const [{ kind }] = matches;
+    const value = glued ?? words[index + 1];
+    if (kind === "info") return { script: null, opaque: opaque || index < words.length - 1 };
+    if (kind === "encoded") {
+      try {
+        return { script: Buffer.from(value ?? "", "base64").toString("utf16le"), opaque: true };
+      } catch {
+        return { script: null, opaque: true };
+      }
+    }
+    if (kind === "args")
+      return {
+        script: value ?? null,
+        opaque: opaque || glued !== undefined || value === undefined,
+      };
+    if (kind === "script") {
+      // `-c -` reads the script on stdin; `-Command:…` is not a form Workit reads.
+      if (value === "-") return { script: stdin ?? null, opaque: true };
+      const rest =
+        glued === undefined ? words.slice(index + 1) : [glued, ...words.slice(index + 1)];
+      return {
+        script: rest.join(" ") || null,
+        opaque: opaque || glued !== undefined || !rest.length,
+      };
+    }
+    opaque ||= kind === "opaque";
+    if (kind !== "switch" && glued === undefined) index++;
+  }
+  // No script: it reads one on stdin (`… | pwsh`, `pwsh -s`) or runs interactively.
+  return { script: null, opaque: true };
+};
 
 /**
  * The script `pwsh`/`powershell` runs: `-Command …` (the rest of the line),
- * `-CommandWithArgs`, or `-EncodedCommand` (base64 UTF-16LE). Parameter
- * names match case-insensitively and by unambiguous prefix. Null for a
- * script file or an interactive shell.
+ * `-CommandWithArgs`, `-EncodedCommand` (base64 UTF-16LE), or Windows
+ * PowerShell's positional command. Null for a script file or an interactive shell.
  */
-export const powershellScript = (words: string[], stdin?: string): string | null => {
-  for (let index = 1; index < words.length; index++) {
-    const word = words[index];
-    if (!/^[-/]/.test(word)) return null;
-    const flag = word.replace(/^[-/]+/, "").toLowerCase();
-    if (!flag) return null;
-    if (flag === "e" || flag === "ec" || (flag.length >= 2 && "encodedcommand".startsWith(flag))) {
-      try {
-        return Buffer.from(words[index + 1] ?? "", "base64").toString("utf16le");
-      } catch {
-        return null;
-      }
-    }
-    if (flag === "cwa" || (flag.length >= 8 && "commandwithargs".startsWith(flag)))
-      return words[index + 1] ?? null;
-    if ("command".startsWith(flag))
-      return words[index + 1] === "-" ? (stdin ?? null) : words.slice(index + 1).join(" ");
-    if (POWERSHELL_VALUES.test(`-${flag}`)) {
-      if (flag === "f" || flag === "file") return null;
-      index++;
-    }
-  }
-  return null;
-};
+export const powershellScript = (words: string[], stdin?: string): string | null =>
+  powershellRun(words, stdin).script;
 
 /**
  * Whether `pwsh`/`powershell` runs code a reader cannot see as text: a
- * `-File` script, `-EncodedCommand` (`-enc`, `-e`, `-ec`), or `pwsh`'s
- * positional script file. `-Command` and `-CommandWithArgs` are read.
+ * `-File` script, `-EncodedCommand` (also glued, `-enc:<b64>`), a `-Command`
+ * glued to its parameter or read from stdin (`-c -`), a parameter that loads
+ * code (`-SettingsFile`, `-ConfigurationName`, `-PSConsoleFile`, `-Login`,
+ * `-NoExit`), one PowerShell would not match by itself, `pwsh`'s positional
+ * script file, or no script at all (`… | pwsh`: stdin).
  */
-export const powershellOpaque = (words: string[]): boolean => {
-  for (let index = 1; index < words.length; index++) {
-    const flag = /^[-/]+(.+)/.exec(words[index])?.[1].toLowerCase();
-    // `pwsh x.ps1` runs a file; Windows PowerShell's positional is a command.
-    if (flag === undefined) return !/powershell/i.test(words[0]);
-    if (flag === "e" || flag === "ec" || (flag.length >= 2 && "encodedcommand".startsWith(flag)))
-      return true;
-    if ("command".startsWith(flag) || flag === "cwa" || flag.startsWith("commandwith"))
-      return false;
-    if (flag === "f" || flag === "file") return true;
-    if (POWERSHELL_VALUES.test(`-${flag}`)) index++;
-  }
-  return false;
-};
+export const powershellOpaque = (words: string[]): boolean => powershellRun(words).opaque;
 
 /** The script `cmd /c …` (or `/k`) runs. */
 export const cmdScript = (words: string[]): string | null => {
