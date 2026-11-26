@@ -315,7 +315,7 @@ const READ_CALLS =
   /^(?:print|log|info|warn|error|debug|puts|readdir(?:Sync)?|listdir|scandir|iterdir|glob|l?stat(?:Sync)?|exists(?:Sync)?|isdir|isfile|is_dir|is_file|access(?:Sync)?|realpath(?:Sync)?|dirname|basename|relative|str|repr|len)$/;
 /** Calls that change files (Python, Node, Ruby, PHP names), for a path value that may reach one. */
 const MUTATING_CALLS =
-  /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
+  /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|f?truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
 /**
  * Inline code that runs code by name, reaches a call by a computed name, deletes (a file's
  * `.delete()`), changes a file's mode or times through a member of a module Workit reads, or
@@ -780,16 +780,50 @@ const opaqueWrites = (
     const end = args.findIndex((arg) => /^[-(!]/.test(arg));
     return writes ? listed(end < 0 ? args : args.slice(0, end)) : null;
   }
-  if (/^g?awk$/.test(name)) {
-    if (!has(/^-i|^--include/)) return null;
+  if (/^[gmn]?awk$/.test(name)) {
     const named: string[] = [];
-    let program = !has(/^-f$|^--file/);
+    const file = has(/^-f$|^--file/);
+    let program: string | undefined;
     for (let index = 0; index < args.length; index++)
-      if (/^(?:-[ifvF]|--(?:include|file|assign|field-separator))$/.test(args[index])) index++;
+      if (/^(?:-[ifvFe]|--(?:include|file|assign|field-separator|source))$/.test(args[index]))
+        program = /^-e$|^--source$/.test(args[index++]) ? args[index] : program;
       else if (args[index].startsWith("-")) continue;
-      else if (program) program = false;
+      else if (program === undefined && !file) program = args[index];
       else named.push(args[index]);
-    return listed(named);
+    // In place it writes its files; a program file, `system`, a print to a file or a pipe, or a
+    // command's `| getline` may write anywhere.
+    if (has(/^-i|^--include/)) return listed(named);
+    return file || /system|printf?[^;}\n]*[>|]|\|&?\s*getline/.test(program ?? "")
+      ? [".", ...pathsIn(program ?? "")]
+      : null;
+  }
+  if (name === "sed") {
+    const scripts: string[] = [];
+    let first: string | undefined;
+    for (let index = 0; index < args.length; index++) {
+      const arg = args[index];
+      // A script file runs commands Workit does not read.
+      if (/^-[nErsuz]*f|^--file/.test(arg)) return ["."];
+      if (/^-[nErsuz]*e$|^--expression$/.test(arg)) scripts.push(args[++index] ?? "");
+      else if (arg.startsWith("--expression=")) scripts.push(arg.slice(13));
+      else if (/^-l$|^--line-length$/.test(arg)) index++;
+      else if (!arg.startsWith("-")) first ??= arg;
+    }
+    if (!scripts.length && first !== undefined) scripts.push(first);
+    // Past `s///` (its `w` or `e` flag kept), `y///` and `/regex/` addresses, a `w`, `W` or `e`
+    // command writes a file or runs one.
+    const writes = scripts.some((script) =>
+      /[wWe]/.test(
+        script
+          .replace(
+            /s(.)(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1([^;}\n]*)/g,
+            (_, _at: string, flags: string) => (/[we]/.test(flags) ? "w" : ""),
+          )
+          .replace(/y(.)(?:\\.|(?!\1)[^\\\n])*\1(?:\\.|(?!\1)[^\\\n])*\1/g, "")
+          .replace(/\\(.)(?:\\.|(?!\1)[^\\\n])*\1|\/(?:\\.|[^/\\\n])*\//g, ""),
+      ),
+    );
+    if (writes) return [".", ...scripts.flatMap(pathsIn)];
   }
   const inline = (flag: RegExp): string[] | null => {
     // Node runs the last `-e`/`-p` and reads its options anywhere (`-e <code> -r ./f.js`); Python
@@ -859,7 +893,10 @@ const opaqueWrites = (
     )
   )
     return [".", ...args.flatMap(pathsIn)];
-  if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name)) return inline(INLINE_CODE);
+  // `deno eval`, `tsx -e` and `ts-node -e` run code like `ruby -e`: always a writer.
+  if (name === "deno" && operands(args)[0] === "eval") return ["."];
+  if (/^(?:python[\d.]*|node|bun|deno|ruby|php|tsx|ts-node)$/.test(name))
+    return inline(INLINE_CODE);
   return shellScript(words) === null ? null : ["."];
 };
 

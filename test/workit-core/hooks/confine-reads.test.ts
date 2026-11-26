@@ -712,3 +712,37 @@ test("Given a transparent or an opaque wrapper, When a judge or an implementer o
   );
   allowed(implementer, ["flock /tmp/l touch x", "ssh host ls"]);
 });
+
+// Round 3, group 4: awk's commands and pipes, sed's `w`, `W` and `e`, a program file, `deno
+// eval`, `tsx -e` and `ts-node -e` write wherever they run; `ftruncate` is a writer like `truncate`.
+test("Given awk or sed that writes or runs a command, deno eval, tsx -e, ts-node -e or an ftruncate, When a judge or an implementer outside its worktree runs it, Then it is denied; the read-only forms run", () => {
+  const writers = [
+    `awk 'BEGIN { system("rm -rf src") }'`,
+    `awk '{ print > "out.txt" }' package.json`,
+    `awk '{ printf "%s", $1 >> "out.txt" }' package.json`,
+    `awk '{ print | "sh" }' package.json`,
+    `awk 'BEGIN { "date" | getline d }'`,
+    "awk -f prog.awk package.json",
+    `gawk -e 'BEGIN { system("id") }'`,
+    "sed -n 'w out.txt' package.json",
+    "sed '/name/W out.txt' package.json",
+    "sed 's/a/b/w out.txt' package.json",
+    "sed 's/a/b/e' package.json",
+    "sed -e '1e rm -rf src' package.json",
+    "sed -f prog.sed package.json",
+    "sed -nf prog.sed package.json",
+    "sed --expression='1e id' package.json",
+    `deno eval "Deno.writeTextFileSync('x','a')"`,
+    `tsx -e "require('fs').writeFileSync('x','a')"`,
+    `ts-node -e "require('fs').writeFileSync('x','a')"`,
+    `npx tsx -e "require('fs').writeFileSync('x','a')"`,
+    `node -e "const { readFileSync: r, promises } = require('node:fs'); promises.ftruncate"`,
+    `python3 -c "import os; f = os.ftruncate"`,
+  ];
+  denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    writers.map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
+});

@@ -542,6 +542,18 @@ const MUST_ALLOW = [
   `bun -e "import fs from 'fs'; console.log(fs.readFileSync('package.json', 'utf8'))"`,
   `bun -e "import { join } from 'node:path'; console.log(join('a', 'b'))"`,
   `node -e "const p = require('./package.json'); for (const [k, v] of Object.entries(p.dependencies ?? {})) console.log(k, v)"`,
+  // awk and sed that only print.
+  "awk '{ print $1 }' package.json",
+  `awk -F: '{ printf "%s", $1 }' package.json`,
+  "awk 'NR > 1 { n++ } END { print n }' package.json",
+  "sed -n '1,5p' package.json",
+  "sed -n '/name/p' package.json",
+  "sed 's/a/b/g' package.json",
+  `sed -n 's/"name": "\\(.*\\)"/\\1/p' package.json`,
+  "sed -E 's/[0-9]+/N/g; s/x/y/' package.json",
+  // Running the candidate is the verifier's job: a script file or a package script stays allowed.
+  "node script.js",
+  "bun run test",
 ];
 
 test("Given the must-allow corpus (#880, verification mwwyoapt's allowed rows, one line per module Workit reads), When a judge or an implementer outside its worktree runs it, Then each line runs", () => {
