@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- a workspace `shared: true` setting makes `workit pr create` and `workit pr edit` warn (never block) when the PR title, body or a new Markdown doc names Workit
 - `workit doctor` warns (`changelog_released`) with the count of [Unreleased] entries a release tag already shipped and the oldest release, and names `workit changelog roll`; it says nothing without release tags, in a shallow clone or without a changelog. `workit changelog release --notes-format github` puts the notes between `<!-- workit:changelog <tag> -->` markers, cut at 24,000 characters with a compare link; `workit release notes edit --from-changelog` replaces an older `workit:changelog:start` block so a body keeps one; the changelog is written through a temp file and a rename (mode and CRLF kept), a missing [Unreleased] section is reported as missing, and glob characters in `--tag-prefix` are matched literally (#889).
 - set verdicts (#891): `workit ledger verdict … --set <name>` shares one non-author review with every PR on this machine whose diff is the same (a lockfile outside the hash needs green CI), `ledger void` retires it, and a sealed workspace `additiveRiskPaths` lets a listed workflow's guarded appends follow the rest of the diff's review lane instead of `--unverified` per PR.
 
