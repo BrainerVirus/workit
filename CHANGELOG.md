@@ -14,25 +14,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [2.25.4] - 2026-11-26
 
-- a workspace `shared: true` setting makes `workit pr create` and `workit pr edit` warn (never block) when the PR title, body or a new Markdown doc names Workit
-- `workit doctor` warns (`changelog_released`) with the count of [Unreleased] entries a release tag already shipped and the oldest release, and names `workit changelog roll`; it says nothing without release tags, in a shallow clone or without a changelog. `workit changelog release --notes-format github` puts the notes between `<!-- workit:changelog <tag> -->` markers, cut at 24,000 characters with a compare link; `workit release notes edit --from-changelog` replaces an older `workit:changelog:start` block so a body keeps one; the changelog is written through a temp file and a rename (mode and CRLF kept), a missing [Unreleased] section is reported as missing, and glob characters in `--tag-prefix` are matched literally (#889).
-- set verdicts (#891): `workit ledger verdict … --set <name>` shares one non-author review with every PR on this machine whose diff is the same (a lockfile outside the hash needs green CI), `ledger void` retires it, and a sealed workspace `additiveRiskPaths` lets a listed workflow's guarded appends follow the rest of the diff's review lane instead of `--unverified` per PR.
+### Fixed
+
+- a Workit command writing the threads store no longer fails as busy while another process makes many short writes; it waits until five seconds pass with no commit (#963).
+
+## [2.25.3] - 2026-11-26
+
+### Fixed
+
+- a judge's or implementer's read-only python -c, node -e or heredoc script with f-strings, template literals, whole-line comments, division, a string's .replace, .to_bytes or a Map's .delete now runs, and inline-script escapes (node --eval=, python3 -mpip, NODE_OPTIONS set anywhere in the command, NAME+=value before a command, Reflect and operator calls, a backslash-newline in an unquoted heredoc) are refused.
+- a judge's or implementer's inline python -c, node -e or bun -e script may import only the modules Workit reads (json, re, pathlib, os.path, sys reads, Node's path, url, util, fs reads and the like) and use a module only as name.member, so string-run sinks (timeit, runpy, pickle, ctypes, numpy writers), Node's module globals, process.binding, awk system() and print >, sed w and e, deno eval, tsx -e, flock, ssh and watch are refused, and a verifier's refusal names the import with a retry from its scratch dir.
+
+## [2.25.2] - 2026-11-26
+
+### Fixed
+
+- shared-workspace warnings match Workit only as a whole word in any script, so a non-ASCII letter or digit next to it (Workité) no longer counts as a boundary.
+
+## [2.25.1] - 2026-11-26
 
 ### Fixed
 
 - the registry guard now reads a compound `cmd /c "…"` or `pwsh -Command "…"` script statement by statement, and judges `xargs` or `parallel` fed a guarded path on stdin, so a link into a guarded path hidden there is denied.
-- Checks running without a slot no longer starve an aged suite waiting on memory; a killed or hung one is pruned or reaped (`workit lock status` shows `stuck?`, `workit lock reap` frees it); wait estimates count no slot for short or io waiters; `workit lock`, `workit run` and `workit fanout plan` read a check's own `heavy`.
 - the registry and ledger guards deny a link or mount (`ln`, symbolic too, `cp -l|-s`, `mount`, `bindfs`) whose source is or holds Workit's state, config or a ledger, so a write through it later in the same command no longer slips past; a ledger under a git common dir not named `.git` (a bare repository, `--separate-git-dir`) is guarded; and the Stop hook stops trusting a `pr.gate` row once the verdict it cited is voided or its set cover expires (#891).
-- shared-workspace warnings match Workit only as a whole word in any script, so a non-ASCII letter or digit next to it (Workité) no longer counts as a boundary.
-- a judge's or implementer's read-only python -c, node -e or heredoc script with f-strings, template literals, whole-line comments, division, a string's .replace, .to_bytes or a Map's .delete now runs, and inline-script escapes (node --eval=, python3 -mpip, NODE_OPTIONS set anywhere in the command, NAME+=value before a command, Reflect and operator calls, a backslash-newline in an unquoted heredoc) are refused.
-- a judge's or implementer's inline python -c, node -e or bun -e script may import only the modules Workit reads (json, re, pathlib, os.path, sys reads, Node's path, url, util, fs reads and the like) and use a module only as name.member, so string-run sinks (timeit, runpy, pickle, ctypes, numpy writers), Node's module globals, process.binding, awk system() and print >, sed w and e, deno eval, tsx -e, flock, ssh and watch are refused, and a verifier's refusal names the import with a retry from its scratch dir.
-- a Workit command writing the threads store no longer fails as busy while another process makes many short writes; it waits until five seconds pass with no commit (#963).
+
+## [2.25.0] - 2026-11-26
+
+### Added
+
+- a workspace `shared: true` setting makes `workit pr create` and `workit pr edit` warn (never block) when the PR title, body or a new Markdown doc names Workit
+
+## [2.24.0] - 2026-11-25
+
+### Added
+
+- set verdicts (#891): `workit ledger verdict … --set <name>` shares one non-author review with every PR on this machine whose diff is the same (a lockfile outside the hash needs green CI), `ledger void` retires it, and a sealed workspace `additiveRiskPaths` lets a listed workflow's guarded appends follow the rest of the diff's review lane instead of `--unverified` per PR.
+
+## [2.23.2] - 2026-11-25
 
 ### Changed
 
 - hook bundles are about 60 KB smaller: hook-loaded schemas validate with zod/mini, and the operation request schemas no longer load in hooks.
+
+## [2.23.1] - 2026-11-25
+
+### Fixed
+
+- Checks running without a slot no longer starve an aged suite waiting on memory; a killed or hung one is pruned or reaped (`workit lock status` shows `stuck?`, `workit lock reap` frees it); wait estimates count no slot for short or io waiters; `workit lock`, `workit run` and `workit fanout plan` read a check's own `heavy`.
+
+## [2.23.0] - 2026-11-25
+
+### Added
+
+- `workit doctor` warns (`changelog_released`) with the count of [Unreleased] entries a release tag already shipped and the oldest release, and names `workit changelog roll`; it says nothing without release tags, in a shallow clone or without a changelog. `workit changelog release --notes-format github` puts the notes between `<!-- workit:changelog <tag> -->` markers, cut at 24,000 characters with a compare link; `workit release notes edit --from-changelog` replaces an older `workit:changelog:start` block so a body keeps one; the changelog is written through a temp file and a rename (mode and CRLF kept), a missing [Unreleased] section is reported as missing, and glob characters in `--tag-prefix` are matched literally (#889).
 
 ## [2.22.3] - 2026-11-25
 
@@ -1934,7 +1970,16 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.3...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.4...HEAD
+[2.25.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.3...workit-dev-v2.25.4
+[2.25.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.2...workit-dev-v2.25.3
+[2.25.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.1...workit-dev-v2.25.2
+[2.25.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.25.0...workit-dev-v2.25.1
+[2.25.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.24.0...workit-dev-v2.25.0
+[2.24.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.23.2...workit-dev-v2.24.0
+[2.23.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.23.1...workit-dev-v2.23.2
+[2.23.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.23.0...workit-dev-v2.23.1
+[2.23.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.3...workit-dev-v2.23.0
 [2.22.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.2...workit-dev-v2.22.3
 [2.22.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.1...workit-dev-v2.22.2
 [2.22.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.0...workit-dev-v2.22.1
