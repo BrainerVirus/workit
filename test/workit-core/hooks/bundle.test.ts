@@ -140,14 +140,12 @@ const HOOK_ENTRIES = [
 // it closes (`--eval=`, `-mpip`, NODE_OPTIONS, `NAME+=value`, a shell's heredoc, env's words and
 // options, a call on a returned value, Reflect…) take core run from 553,461 B to 555,145 B (+1,684 B).
 // #955 also spends on hook-slim's 2 KiB, so the ceiling is core run plus 2 KiB.
-
-
 // #956 round 3 (2026-11-26, Bun 1.4.5): inline code imports only the modules Workit reads (tables of
-// whole and members-only modules, bindings used as name.member, ambient globals, Node's module
-// globals), transparent and opaque wrappers, awk/sed/deno/tsx and the judge's refusal reason take
-// core run from 556,457 B to 561,610 B (+5,153 B; SPAWNS lost the names the tables now cover).
-// The ceiling is core run plus 2 KiB.
-const BUDGET = 560_110;
+// whole and members-only modules, bindings used as name.member, ambient globals and private members,
+// Node's module globals), transparent and opaque wrappers, awk/sed/deno/tsx and the judge's refusal
+// reason. Rebased on #961 (core run 558,062 B), #880 and #956 together take core run to 566,224 B
+// (+8,162 B; SPAWNS lost the names the tables now cover). The ceiling is core run plus 2 KiB.
+const BUDGET = 568_272;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

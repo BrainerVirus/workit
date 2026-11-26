@@ -404,13 +404,13 @@ const MEMBERS: Record<string, string> = {
   Bun: "file argv env version inspect",
 };
 /**
- * Names inline code may not use: a dunder, a private member, a reflective builtin or global, code
+ * Names inline code may not use: a dunder, a private member (`._x`, Python and Node), a reflective builtin or global, code
  * evaluated from an annotation, a module reached through another; in Node, a computed object key
  * or (strings included) a `flag` option, which opens a file to write.
  */
 const AMBIENT = {
   py: /__\w+__|\.\s*_|(?<![\w.])(?:compile|globals|locals|vars|setattr|delattr|breakpoint|help)(?!\w)|get_type_hints|ForwardRef|\.\s*(?:os|sys|subprocess|shutil|builtins|importlib|ctypes|posix|codecs)(?!\w)/,
-  js: /__\w+__|(?<![\w$.])(?:globalThis|global|module|Function|WebAssembly|Worker|Deno)(?![\w$])|[{,]\s*\[[^\]]*\]\s*:/,
+  js: /__\w+__|\.\s*_|(?<![\w$.])(?:globalThis|global|module|Function|WebAssembly|Worker|Deno)(?![\w$])|[{,]\s*\[[^\]]*\]\s*:/,
   raw: /constructor|[gs]etPrototypeOf|getOwnPropertyNames|\bflags?\b/,
 };
 const OUTSIDE =

@@ -769,6 +769,9 @@ test("Given inline code that runs code from data, opens a read to write or reach
     `node -e "const F = (() => 1)['constructor']; F('return 1')"`,
     `node -e "const P = Object.getPrototypeOf(() => 1); P"`,
     `node -e "Object.getOwnPropertyNames(Function)"`,
+    // A private member reaches past the read members (`_handle` holds the stream's file handle).
+    `node -e "console.log(process.stdout._handle)"`,
+    `node -e "const fs = require('fs'); fs.readFileSync._x"`,
   ];
   denied(verifier, writers, "workit scratch confinement: verifier ver-reads");
   denied(
@@ -780,5 +783,15 @@ test("Given inline code that runs code from data, opens a read to write or reach
     `python3 -c "import yaml; print(yaml.safe_load('a: 1'))"`,
     `python3 -c "d = {'a': 1}; print(d.copy())"`,
     `node -e "console.log([[1, 2], [3]].flat())"`,
+    // A network call reads; confinement covers file writes only.
+    `node -e "fetch('http://localhost:1/x').then((r) => r.text()).then(console.log)"`,
   ]);
+  // Python's urllib.request stays outside the tables: it also holds urlretrieve, which writes.
+  denied(
+    verifier,
+    [
+      `python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:1').read())"`,
+    ],
+    "`import urllib.request` is outside the modules Workit reads",
+  );
 });
