@@ -498,13 +498,16 @@ const FOREIGN_UNBLOCK =
   "run workit without that variable: a verifier or reviewer passes the --session and --token its SubagentStart context names; a real OpenCode, Pi or Codex session records from a shell no other host started";
 
 /**
- * Host session variables this shell cannot vouch for (#981, #986), on every host:
- *   - two or more of OPENCODE_SESSION_ID, PI_SESSION_ID and CODEX_THREAD_ID:
- *     each host sets only its own (an OpenCode child or Pi worker names its
- *     lead in WORKIT_SESSION_ID, never in a second variable), so the extra one
- *     was set by hand or inherited from an outer host's shell;
- *   - one that names another host than the shell does: a set WORKIT_HOST, or
- *     a variable only Claude Code's or Cursor's own shell carries.
+ * Host session variables this shell cannot vouch for (#981, #986), on every host.
+ * Each name the shell carries says which host it is: WORKIT_HOST, a mark only
+ * that host's own shell carries (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+ * CURSOR_AGENT), and each host session variable (OPENCODE_SESSION_ID,
+ * PI_SESSION_ID, CODEX_THREAD_ID: each host sets only its own, and an OpenCode
+ * child or Pi worker names its lead in WORKIT_SESSION_ID, never in a second
+ * variable). Two names that disagree are refused, whichever one wins:
+ *   - a host session variable that names another host than any other name;
+ *   - two host session variables;
+ *   - WORKIT_HOST naming another host than a mark.
  * A host nested in another host's shell reads the same, so it is refused too.
  * `claimed`: the session the call acts as, for the message; null for `--self`.
  */
@@ -512,24 +515,40 @@ export function foreignHostSessionRefusal(
   env: NodeJS.ProcessEnv,
   claimed: string | null,
 ): SessionClaimRefusal | null {
-  const set = HOST_SESSION_VARS.filter(([key]) => env[key]?.trim());
-  if (set.length === 0) return null;
-  const vouches = claimed ?? "the session it names";
   const declared = env.WORKIT_HOST?.trim();
-  const mark = HOST_MARKS.find(([name]) => env[name]?.trim());
-  const shell = declared ? family(declared) : (mark?.[1] ?? null);
-  const disagreeing = shell === null ? undefined : set.find(([, h]) => family(h(env)) !== shell);
-  if (shell !== null && disagreeing) {
-    const [key, h] = disagreeing;
-    const source = declared ? `WORKIT_HOST=${declared}` : mark?.[0];
-    return {
-      error: `foreign_host_session: ${key} names another host's session (${h(env)}) in a ${HOST_LABELS[shell] ?? shell} shell (${source}), so nothing vouches for ${vouches}`,
-      unblock: FOREIGN_UNBLOCK,
-    };
+  const shellNames: Array<{ host: string; source: string }> = [
+    ...(declared
+      ? [{ host: family(declared) ?? declared, source: `WORKIT_HOST=${declared}` }]
+      : []),
+    ...HOST_MARKS.filter(([name]) => env[name]?.trim()).map(([name, host]) => ({
+      host,
+      source: name,
+    })),
+  ];
+  const set = HOST_SESSION_VARS.filter(([key]) => env[key]?.trim()).map(([key, host]) => ({
+    key,
+    session: host(env),
+    host: family(host(env)) ?? "",
+  }));
+  const vouches = claimed ?? "the session it names";
+  for (const variable of set) {
+    const other = shellNames.find((name) => name.host !== variable.host);
+    if (other)
+      return {
+        error: `foreign_host_session: ${variable.key} names another host's session (${variable.session}) where ${other.source} names ${HOST_LABELS[other.host] ?? other.host}, so nothing vouches for ${vouches}`,
+        unblock: FOREIGN_UNBLOCK,
+      };
   }
   if (set.length > 1)
     return {
-      error: `foreign_host_session: ${set.map(([key]) => key).join(" and ")} are set together, and a host sets only its own session variable, so nothing vouches for ${vouches}`,
+      error: `foreign_host_session: ${set.map(({ key }) => key).join(" and ")} are set together, and a host sets only its own session variable, so nothing vouches for ${vouches}`,
+      unblock: FOREIGN_UNBLOCK,
+    };
+  const [first, ...rest] = shellNames;
+  const clash = first ? rest.find((name) => name.host !== first.host) : undefined;
+  if (first && clash)
+    return {
+      error: `foreign_host_session: ${first.source} names another host than ${clash.source} (${HOST_LABELS[clash.host] ?? clash.host}), so nothing vouches for ${vouches}`,
       unblock: FOREIGN_UNBLOCK,
     };
   return null;

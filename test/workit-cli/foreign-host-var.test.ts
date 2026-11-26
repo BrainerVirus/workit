@@ -148,6 +148,31 @@ test.each(hostShells)(
   },
 );
 
+// #986 review: WORKIT_HOST set to agree with the forged variable does not
+// outvote the shell's own mark (Cursor's, or Claude Code's with no WORKIT_SESSION_ID).
+test.each([
+  ["Cursor", { CURSOR_AGENT: "1" }],
+  ["Claude Code (no WORKIT_SESSION_ID)", { CLAUDECODE: "1" }],
+])(
+  "Given a real %s shell, When WORKIT_HOST=opencode and OPENCODE_SESSION_ID are prefixed to a verdict or a commit, Then both are refused (#986)",
+  async (_label, shell) => {
+    const root = featureRepo("lead");
+    const forged = { ...shell, WORKIT_HOST: "opencode", OPENCODE_SESSION_ID: "nobody-7" };
+    const recorded = await verdict(root, forged);
+    expect(recorded.code, recorded.stdout).toBe(3);
+    expect(JSON.parse(recorded.stdout).error).toStartWith("foreign_host_session");
+    expect(await gateAccepts(root)).toBe(false);
+    writeFileSync(path.join(root, "more.txt"), "more\n");
+    const commit = await run(
+      root,
+      ["git", "commit", "-m", "feat: more", "--json", "--", "more.txt"],
+      forged,
+    );
+    expect(commit.code, commit.stdout).toBe(3);
+    expect(commit.stdout).toContain("foreign_host_session");
+  },
+);
+
 test.each(hostShells)(
   "Given a real %s shell, When it commits with a foreign host variable, Then the commit is refused (#986)",
   async (_label, shell, foreign) => {

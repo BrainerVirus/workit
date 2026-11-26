@@ -240,6 +240,42 @@ test("Given WORKIT_HOST or a Cursor shell's own mark, When a host session variab
     );
 });
 
+test("Given a Cursor or Claude Code shell's own mark, When WORKIT_HOST is set to agree with a foreign host variable, Then the mark still refuses it (#986)", () => {
+  for (const mark of [
+    { CURSOR_AGENT: "1" },
+    { CLAUDECODE: "1" },
+    { CLAUDE_CODE_ENTRYPOINT: "cli" },
+  ])
+    for (const [workitHost, key] of [
+      ["opencode", "OPENCODE_SESSION_ID"],
+      ["pi", "PI_SESSION_ID"],
+      ["codex_cli", "CODEX_THREAD_ID"],
+    ] as const) {
+      const env = { ...mark, WORKIT_HOST: workitHost, [key]: "x" };
+      expect(sessionClaimRefusal(env, "x")?.error, JSON.stringify(env)).toStartWith(
+        `foreign_host_session: ${key} names another host's session`,
+      );
+      expect(foreignHostSessionRefusal(env, null)?.error, JSON.stringify(env)).toStartWith(
+        "foreign_host_session:",
+      );
+    }
+});
+
+test("Given a host's own mark, When WORKIT_HOST names another host, Then the claim is refused as foreign even with no host session variable (#986)", () => {
+  const cases: ReadonlyArray<NodeJS.ProcessEnv> = [
+    { CURSOR_AGENT: "1", WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" },
+    { CLAUDECODE: "1", WORKIT_HOST: "cursor", WORKIT_SESSION_ID: "lead" },
+    { CLAUDECODE: "1", CURSOR_AGENT: "1" },
+    // A set CODEX_THREAD_ID or PI_SESSION_ID is its own host's mark.
+    { CODEX_THREAD_ID: "t-1", WORKIT_HOST: "pi" },
+    { PI_SESSION_ID: "pi-1", WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: "lead" },
+  ];
+  for (const env of cases)
+    expect(sessionClaimRefusal(env, "lead")?.error, JSON.stringify(env)).toStartWith(
+      "foreign_host_session:",
+    );
+});
+
 test("Given each real host's own shell (an OpenCode child and a Pi worker naming their lead in WORKIT_SESSION_ID), Then nothing is foreign and its own session is claimed (#986)", () => {
   const own: ReadonlyArray<readonly [NodeJS.ProcessEnv, string]> = [
     ...REAL_SHELLS.map(([, shell, key]) => [shell, shell[key]!] as const),
@@ -251,6 +287,16 @@ test("Given each real host's own shell (an OpenCode child and a Pi worker naming
     [{ WORKIT_HOST: "codex_desktop", CODEX_THREAD_ID: "t-1" }, "t-1"],
     // Cursor's shell carries no session variable: its id is declared (`--session`).
     [{ CURSOR_AGENT: "1" }, "cursor-conv-1"],
+    [{ CURSOR_AGENT: "1", WORKIT_HOST: "cursor" }, "cursor-conv-1"],
+    [
+      {
+        WORKIT_HOST: "claude_code",
+        WORKIT_SESSION_ID: "lead",
+        CLAUDECODE: "1",
+        CLAUDE_CODE_ENTRYPOINT: "cli",
+      },
+      "lead",
+    ],
   ];
   for (const [env, claimed] of own) {
     expect(foreignHostSessionRefusal(env, claimed), JSON.stringify(env)).toBeNull();
