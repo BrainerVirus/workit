@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `workit doctor` warns (`changelog_released`) with the count of [Unreleased] entries a release tag already shipped and the oldest release, and names `workit changelog roll`; it says nothing without release tags, in a shallow clone or without a changelog. `workit changelog release --notes-format github` puts the notes between `<!-- workit:changelog <tag> -->` markers, cut at 24,000 characters with a compare link; `workit release notes edit --from-changelog` replaces an older `workit:changelog:start` block so a body keeps one; the changelog is written through a temp file and a rename (mode and CRLF kept), a missing [Unreleased] section is reported as missing, and glob characters in `--tag-prefix` are matched literally (#889).
 
+### Fixed
+
+- Checks running without a slot no longer starve an aged suite waiting on memory; a killed or hung one is pruned or reaped (`workit lock status` shows `stuck?`, `workit lock reap` frees it); wait estimates count no slot for short or io waiters; `workit lock`, `workit run` and `workit fanout plan` read a check's own `heavy`.
+
 ## [2.22.3] - 2026-11-25
 
 ### Fixed

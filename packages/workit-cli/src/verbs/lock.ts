@@ -39,6 +39,7 @@ import {
   liveHolders,
   parseWait,
   readGrants,
+  repoResources,
   resolveResourceSettings,
   servingOrder,
   SILENT_MS,
@@ -75,7 +76,7 @@ async function settingsFor(io: Io) {
   const config = loadCheckConfig(io.cwd);
   const resolved = resolveResourceSettings([
     { label: "workspaces.json", trust: "machine", value: workspace.value },
-    { label: CHECKS_FILE, trust: "repo", value: config.resources },
+    { label: CHECKS_FILE, trust: "repo", value: repoResources(config) },
   ]);
   return Object.assign(resolved.settings, { budget: resolved.budget });
 }
@@ -217,7 +218,7 @@ async function status(io: Io): Promise<number> {
   const slots = leaseSlots(dir, settings.slots, {}, maxHold);
   const waiting = waitingOrder(dir, slots, leaseQueue(dir), settings.budget.agingMs);
   const eta = estimates(slots, waiting, settings.slots, ledgerDurations());
-  const admitted = admittedHolders(dir);
+  const admitted = admittedHolders(dir, {}, maxHold);
   const budget = settings.budget;
   return emit(
     io,
@@ -234,6 +235,7 @@ async function status(io: Io): Promise<number> {
       admitted: admitted.map((entry) => ({
         ...describeAdmitted(entry),
         stale: entry.stale,
+        stuck: entry.stuck,
       })),
       queue: waiting.map((entry) => entry.holder),
       estimates: eta,
@@ -254,6 +256,9 @@ async function status(io: Io): Promise<number> {
         (entry) =>
           `  ${describeHolder(describeAdmitted(entry))}${entry.stale ? ` (stale: ${entry.stale}; the next read drops it)` : ""}`,
       ),
+      ...(admitted.some((entry) => entry.stuck)
+        ? ["  a stuck? slot-free check's memory is freed by: workit lock reap [<pid>]"]
+        : []),
     ],
   );
 }
@@ -267,6 +272,7 @@ const describeAdmitted = (entry: AdmittedEntry) => ({
   kind: entry.record.kind ?? "admitted",
   ref: entry.record.ref ?? null,
   bytes: entry.record.bytes ?? 0,
+  ...(entry.stuck ? { stuck: entry.stuck } : {}),
 });
 
 const targetArg = (args: string[]): string | undefined => args.find((arg) => arg !== "--json");
@@ -289,11 +295,11 @@ async function reap(args: string[], io: Io): Promise<number> {
       ? [
           ...pruned.map(
             (item) =>
-              `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
+              `workit: dropped ${item.kind === "slot" ? "a dead holder's slot" : item.kind === "admitted" ? "a dead admitted holder" : "a queued waiter"} (${item.reason}): ${describeHolder(item)}`,
           ),
           ...recorded.map(
             (item) =>
-              `workit: reaped slot ${item.slot} (${item.reason}): ${describeHolder({ ...item, stuck: null })}; pid ${item.pid} still runs outside the lease${item.ledgerRowId ? `; ledger ${item.ledgerRowId}` : ""}`,
+              `workit: reaped ${item.slot === null ? `a slot-free ${item.admitted ?? "admitted"} check` : `slot ${item.slot}`} (${item.reason}): ${describeHolder({ ...item, stuck: null })}; pid ${item.pid} still runs outside the lease${item.ledgerRowId ? `; ledger ${item.ledgerRowId}` : ""}`,
           ),
         ]
       : [

@@ -15,6 +15,7 @@ import {
   queueDir,
   reclaim,
   recordPeakRss,
+  slotFreeCheck,
   staleReason,
   stuckReason,
   ticketStale,
@@ -121,12 +122,14 @@ export function matchesTarget(holder: LeaseHolder, target: LeaseTarget): boolean
   return within(target.dir, holder.cwd);
 }
 
-export type Reaped = LeaseHolder & { slot: number; reason: string };
+/** A reaped holder: the slot it held, or null for a check admitted without one (`admitted`: short or io). */
+export type Reaped = LeaseHolder & { slot: number | null; reason: string; admitted?: string };
 
 /**
- * Free every slot whose live holder is stuck (stuckReason), or only those
- * matching `target`. The holder's process is not signalled: it keeps running
- * outside the lease, and its own release never touches the slot again.
+ * Free every slot whose live holder is stuck (stuckReason), and the memory of
+ * every stuck check admitted without a slot (#926), or only those matching
+ * `target`. The holder's process is not signalled: it keeps running outside
+ * the lease, and its own release never touches the lease again.
  */
 export function reapStuck(
   dir: string,
@@ -149,6 +152,21 @@ export function reapStuck(
     });
     if (removed && reason)
       reaped.push({ ...state.holder, stuck: reason, slot: state.slot, reason });
+  }
+  for (const entry of admittedHolders(dir, options.probe, maxHoldMs)) {
+    if (!entry.stuck || !slotFreeCheck(entry.record)) continue;
+    const holder = holderFields(entry.record);
+    if (options.target && !matchesTarget(holder, options.target)) continue;
+    let reason: string | null = null;
+    const removed = reclaim(entry.file, (current) => {
+      reason =
+        current?.id === entry.record.id && !staleReason(current, options.probe)
+          ? stuckReason(current, maxHoldMs, options.probe?.now)
+          : null;
+      return reason !== null;
+    });
+    if (removed && reason)
+      reaped.push({ ...holder, stuck: reason, slot: null, admitted: entry.record.kind, reason });
   }
   return reaped;
 }

@@ -97,6 +97,7 @@ import {
   heldLease,
   leaseDir,
   recordGroup,
+  repoResources,
   resolveResourceSettings,
   SHORT_CHECK_MS,
   withGate,
@@ -892,7 +893,7 @@ async function runGroup(
   const workspace = await workspaceResources(io);
   const { settings } = resolveResourceSettings([
     { label: "workspaces.json", trust: "machine", value: workspace.value },
-    { label: CHECKS_FILE, trust: "repo", value: config.resources },
+    { label: CHECKS_FILE, trust: "repo", value: repoResources(config) },
   ]);
   const isHeavy = (name: string) =>
     settings.heavy.includes(name) ||
@@ -1085,7 +1086,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     const workspace = await workspaceResources(io);
     const { settings, warnings, budget } = resolveResourceSettings([
       { label: "workspaces.json", trust: "machine", value: workspace.value },
-      { label: CHECKS_FILE, trust: "repo", value: config.resources },
+      { label: CHECKS_FILE, trust: "repo", value: repoResources(config) },
     ]);
     if (options.waitMs !== null) settings.waitMs = options.waitMs;
     // #645: a queued check must not outlive the timeout its caller set.

@@ -89,7 +89,9 @@ A check entry can also be an object with its command and its own `heavy`:
 ```
 
 - `"heavy": true` queues the check for the heavy-check lease, like listing it
-  under `resources.heavy`.
+  under `resources.heavy`; every verb that reads the repo's resources
+  (`workit lock`, `workit run`, `workit fanout plan`'s full-suite warning)
+  counts it as heavy too.
 - `"heavy": "io"` marks it network-bound: a run that mostly waits on a model
   API or the network. It runs without taking a CPU slot, even with every slot
   held, while the memory budget and the pressure gate allow; when memory is
@@ -169,6 +171,11 @@ workit lock status                # who holds the lease; `workit lock wait` wait
   measured run; so two full suites that each take 25 min are not flagged at
   20 min. `workit lock reap` frees a stuck slot. The next acquirer reclaims
   one itself only when it is past 3 times its limit and silent for its limit.
+  A check running without a slot is judged the same way: it shows `stuck?`
+  under `admitted (no slot):`, `workit lock reap` frees its memory, and the
+  next check admitted reclaims it past 3 times its limit. The next admission
+  also drops a slot-free check whose process is gone. A dev server is never
+  shown stuck: it frees its memory when it stops.
 - **Fanout plans.** `workit fanout plan` warns when one wave has more slices
   whose VERIFY runs a full suite (a heavy named check such as
   `workit check test`, or a heavy command that names no file) than the
@@ -309,7 +316,10 @@ From a check's side:
 
   Otherwise it queues, first in line. A network-bound check (`"heavy": "io"`,
   `--io`) does the same whatever its runtime. A check never measured always
-  queues for a slot.
+  queues for a slot. While a waiter that has waited 5 minutes does not fit the
+  free memory, no check starts without a slot: it queues, so a stream of
+  short or network-bound runs cannot starve a big suite. A wait estimate
+  counts no slot for a short or network-bound waiter ahead.
 - **A holder in another checkout is not your run.** Subagents share the lead's
   session id, so a holder can show your own session. A check never joins or
   reports another run: when a holder runs in another worktree (one nested

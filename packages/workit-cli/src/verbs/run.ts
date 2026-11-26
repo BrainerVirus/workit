@@ -22,6 +22,7 @@ import { currentBranch } from "@workit-dev/core/src/git/rev";
 import { hostSessionFromEnv, realHostSession } from "@workit-dev/core/src/host-session";
 import { appendObserved, actorFromEnv } from "@workit-dev/core/src/ledger";
 import { hostPid, leadOf } from "@workit-dev/core/src/core/live-session";
+import { repoResources } from "@workit-dev/core/src/core/resources";
 import { procTree } from "@workit-dev/core/src/core/proc-tree";
 import {
   DEFAULT_PROC_NAME,
@@ -260,7 +261,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const workspace = await workspaceResources(io);
   const sources = [
     { label: "workspaces.json", trust: "machine" as const, value: workspace.value },
-    { label: CHECKS_FILE, trust: "repo" as const, value: loadCheckConfig(cwd).resources },
+    { label: CHECKS_FILE, trust: "repo" as const, value: repoResources(loadCheckConfig(cwd)) },
   ];
   const id = newProcId();
   const owner = agent === null ? null : runDeps.hostPid();
