@@ -109,11 +109,16 @@ test("given a tracked stream whose reader is gone, when flushing, then the error
   const pipe = bunLikePipe();
   trackWrites([pipe.stream]);
   pipe.stream.write("never taken", () => {});
-  const flushed = flushStreams([pipe.stream], 5_000);
+  let flushed = false;
+  // The timeout is far past the test's own: only the close can end this wait.
+  const flushing = flushStreams([pipe.stream], 600_000).then(() => {
+    flushed = true;
+  });
+  await Promise.resolve();
+  expect(flushed).toBe(false);
   for (const listener of pipe.listeners) listener();
-  const started = Date.now();
-  await flushed;
-  expect(Date.now() - started).toBeLessThan(1_000);
+  await flushing;
+  expect(flushed).toBe(true);
 });
 
 const scratch = mkdtempSync(path.join(os.tmpdir(), "wk-output-pipe-"));
