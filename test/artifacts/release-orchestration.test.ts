@@ -209,7 +209,7 @@ test(
     const npmFirst = config.indexOf("@semantic-release/npm");
     const npmLast = config.lastIndexOf("@semantic-release/npm");
     const verify = config.indexOf("verifyConditionsCmd");
-    // The rewrite's own prepareCmd (roll-changelog has one too, earlier).
+    // The rewrite's own prepareCmd (`workit changelog release` has one too, earlier).
     const prepare = config.search(
       /prepareCmd:\s*"bun packages\/workit-core\/scripts\/rewrite-workspace-deps\.ts/,
     );
@@ -298,12 +298,21 @@ test(
     expect(notesIdx).toBeGreaterThan(-1);
     expect(notesIdx).toBeLessThan(githubIdx);
     // semantic-release joins generateNotes outputs in plugin order: the
-    // CHANGELOG.md block must come before the PR-title list.
+    // CHANGELOG.md block must come before the PR-title list. Both changelog
+    // steps run `workit changelog release` from this checkout's source (never
+    // npm), on the workit-dev-v tags; prepare writes, generateNotes only prints.
     const changelogIdx = cfg.plugins.findIndex((p) =>
-      String(opts(p).generateNotesCmd ?? "").includes("scripts/roll-changelog.ts --notes"),
+      String(opts(p).generateNotesCmd ?? "").includes("changelog release"),
     );
     expect(changelogIdx).toBeGreaterThan(-1);
     expect(changelogIdx).toBeLessThan(notesIdx);
+    const fromSource = `bun packages/workit-cli/src/main.ts changelog release \${nextRelease.version}`;
+    expect(opts(cfg.plugins[changelogIdx]).generateNotesCmd).toBe(
+      `${fromSource} --no-write --notes-out - --notes-format github --tag-prefix ${TAG_PREFIX}`,
+    );
+    expect(opts(cfg.plugins[changelogIdx]).prepareCmd).toBe(
+      `${fromSource} --tag-prefix ${TAG_PREFIX}`,
+    );
     const writerOpts = opts(cfg.plugins[notesIdx]).writerOpts as Record<string, unknown>;
     expect(writerOpts.finalizeContext).toBe(
       require(path.resolve(REPO_ROOT, "scripts/clean-release-notes.cjs")),

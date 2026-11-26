@@ -31,16 +31,18 @@ release still lists its commit. `style` and the old `chore(release)`
 manifest-sync commits stay out (`presetConfig.types` in `release.config.cjs`).
 
 A release body starts with the release's hand-written `CHANGELOG.md`
-entries, between `<!-- workit:changelog:start -->` and
-`<!-- workit:changelog:end -->`, then the PR-title list. A release with no
-new entries gets the PR-title list only. `scripts/roll-changelog.ts` decides
-which entries are new. An entry belongs to the first `workit-dev-v*` tag whose
+entries, between `<!-- workit:changelog workit-dev-v<version> -->` and
+`<!-- /workit:changelog -->`, then the PR-title list. A release with no
+new entries gets the PR-title list only. `workit changelog release`, run from
+this checkout's source (`bun packages/workit-cli/src/main.ts`, never npm),
+decides which entries are new. An entry belongs to the first `workit-dev-v*` tag whose
 `CHANGELOG.md` already holds it, matched on its first 100 characters with
-whitespace collapsed. The release's `generateNotesCmd` prints that block, and
+whitespace collapsed. The release's `generateNotesCmd` prints that block (`--no-write --notes-out -
+--notes-format github`), and
 its `prepareCmd` moves the entries from `[Unreleased]` into
 `## [<version>] - <date>` in the release checkout. A release never writes back
 to `main`, so `main` gets the same split from a PR that runs
-`bun scripts/roll-changelog.ts`, the same way `sync-release-manifests.ts`
+`workit changelog roll`, the same way `sync-release-manifests.ts`
 brings the manifests up to date. Because entries are matched against the
 tags, an unrolled `main` never repeats an entry a release already shipped.
 `bun run lint` warns (repo rule `released-changelog`) at each such entry still
@@ -54,8 +56,13 @@ The roll writes nothing and exits 1 when `[Unreleased]` holds an entry that
 its release's section already has (a merge put back what a roll moved), or
 when the result would hold any entry or continuation line fewer times than
 before (`##`/`###` headings and link definitions aside: a roll merges an
-emptied group into the same-named group of a version and rewrites links). Unknown flags and `--help` print the usage and exit 2.
-If `roll-changelog.ts` fails in a release, semantic-release stops at
+emptied group into the same-named group of a version and rewrites links).
+Releases cut before this used `<!-- workit:changelog:start -->` and
+`<!-- workit:changelog:end -->`; `workit release notes edit --from-changelog`
+and `scripts/backfill-release-notes.ts --changelog` replace such a block, so a
+body keeps one. `workit doctor` warns (`changelog_released`) with the count of
+shipped entries still under `[Unreleased]`.
+If `workit changelog release` fails in a release, semantic-release stops at
 generateNotes or prepare, before it creates the tag, the GitHub release or
 any npm publish.
 

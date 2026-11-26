@@ -58,7 +58,9 @@ does.
 Puts the version's changelog section at the top of a published release's
 body, between `<!-- workit:changelog <tag> -->` markers, and keeps the rest
 of the body. When the markers are already there, it replaces the text between
-them. A rerun with the same section changes nothing. The section is read at
+them; a block between the older `<!-- workit:changelog:start -->` and
+`<!-- workit:changelog:end -->` markers is replaced the same way, so the body
+keeps one block. A rerun with the same section changes nothing. The section is read at
 the tag's commit, else on the fetched trunk, which suits a backfill of older
 releases. It needs the `release` grant. It refuses when the section is
 missing or the forge has no release for the tag.

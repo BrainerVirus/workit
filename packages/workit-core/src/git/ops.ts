@@ -1668,6 +1668,32 @@ export type ReleaseLine = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** The branch policy's `releaseTagPrefix` for `cwd`, undefined when unset or unreadable. */
+function policyTagPrefix(cwd: string): unknown {
+  try {
+    const selected = resolveRuntimeWorkspacePolicy(
+      cwd,
+      "branch",
+      process.env.WORKIT_PROFILE?.trim() || undefined,
+    ).policy as Record<string, unknown> | undefined;
+    return selected?.releaseTagPrefix;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The release tag prefix someone set for `cwd`: the branch policy's
+ * `releaseTagPrefix`, else git-flow's `gitflow.prefix.versiontag` (which may be
+ * empty). Null when neither is set, where releaseLinesOf falls back to `v`.
+ */
+export function configuredTagPrefix(cwd: string): string | null {
+  const policy = policyTagPrefix(cwd);
+  if (typeof policy === "string") return policy.trim();
+  const flow = git(cwd, ["config", "--get", "gitflow.prefix.versiontag"]);
+  return flow.ok ? flow.stdout.trim() : null;
+}
+
 /**
  * The workspace's release lines: its own first, then one per release track
  * (core/release-tracks.ts reads them leniently). The tag prefix is the
@@ -1676,18 +1702,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  */
 export function releaseLinesOf(cwd: string): ReleaseLine[] {
   const { preset, branches, production } = releaseBranchesOf(cwd);
-  let policyPrefix: unknown;
-  try {
-    const selected = resolveRuntimeWorkspacePolicy(
-      cwd,
-      "branch",
-      process.env.WORKIT_PROFILE?.trim() || undefined,
-    ).policy as Record<string, unknown> | undefined;
-    policyPrefix = selected?.releaseTagPrefix;
-  } catch {
-    policyPrefix = undefined;
-  }
-  const prefix = releaseTagPrefixOf(cwd, policyPrefix);
+  const prefix = releaseTagPrefixOf(cwd, policyTagPrefix(cwd));
   const trunk = production ?? "main";
   const lines: ReleaseLine[] = [
     {

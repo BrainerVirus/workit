@@ -8,64 +8,217 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > **Version model.** Semantic-release computes published versions from
 > Conventional Commits. Each PR adds its entries under [Unreleased]; an entry
 > belongs to the first `workit-dev-v*` release whose tag holds it, and
-> `bun scripts/roll-changelog.ts` moves released entries into that version's
+> `workit changelog roll` moves released entries into that version's
 > section. A GitHub release lists its version's entries first, then the
 > generated list of PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `workit doctor` warns (`changelog_released`) with the count of [Unreleased] entries a release tag already shipped and the oldest release, and names `workit changelog roll`; it says nothing without release tags, in a shallow clone or without a changelog. `workit changelog release --notes-format github` puts the notes between `<!-- workit:changelog <tag> -->` markers, cut at 24,000 characters with a compare link; `workit release notes edit --from-changelog` replaces an older `workit:changelog:start` block so a body keeps one; the changelog is written through a temp file and a rename (mode and CRLF kept), a missing [Unreleased] section is reported as missing, and glob characters in `--tag-prefix` are matched literally (#889).
+
+## [2.22.3] - 2026-11-25
+
+### Fixed
+
+- two Workit processes moving an old folder store at once can no longer both take over its stale lock; one mover wins and a fresh lock is never removed (#892).
+
+## [2.22.2] - 2026-11-25
+
+### Fixed
+
+- Outside a git repository Workit keeps a folder's ledger, tasks, plans, retros, handoffs and notes in its state dir (<state>/folders/<folder>-<hash>), never in <folder>/.workit; an older .workit there moves once with a one-line note (team config stays), and workit doctor row stray_workit lists any left in the cwd or its parents (#892).
+
+## [2.22.1] - 2026-11-25
+
+### Fixed
+
+- the raw-git hook judges a gh default, upstream or origin remote by its push URL, with pushInsteadOf and insteadOf applied as git remote get-url --push does, so it picks the base repository the forge verbs pick.
+
+## [2.22.0] - 2026-11-25
+
+### Added
+
+- `workit changelog roll` moves each [Unreleased] entry into the release whose tag first holds it, and `workit changelog release <x.y.z> [--date] [--notes-out <file|->] [--no-write]` cuts that version's section and writes its entries as release notes; both are local only (no forge, no grant) for semantic-release, release-please and GoReleaser pipelines
+
+## [2.21.10] - 2026-11-25
+
+### Fixed
+
+- A fork's PRs stay in the fork when `gh repo set-default <owner>/<fork>` is set (`remote.<name>.gh-resolved` = `base`): the `pr` and `ci` verbs used to target the fork's parent repository (or an `upstream` remote) whatever the checkout said, so a PR for a branch pushed to a working fork opened on the parent. On GitHub the default order is now the `gh repo set-default` remote, then `upstream`, then the fork parent, then the push repository. Only `gh-resolved` = `base` in the repository's own config counts (a legacy `owner/repo` value, a global or an included key is ignored, by the verbs and the raw-git hook alike), a GitLab checkout ignores the key, and a default naming a missing remote, one with several push URLs, or a remote on another host or forge is skipped with a note naming the remote and why (#937).
+
+## [2.21.9] - 2026-11-25
+
+### Fixed
+
+- `workit issue create|comment|close --repo` refuses a repository outside the workspace's own forge owners (the checkout's, the tracker's, `vcs.account`, `remotes` claims; on GitLab the full namespace) unless the workspace's sealed `externalRepos` lists it, which only the user sets at their terminal (`workit workspace set <ws> externalRepos=…`); `workit pr ready|edit` on another author's PR now need `--others-pr --reason`, like `pr merge`; the Claude Code auto-mode allow line says the CLI enforces these scopes and names `issue close` (#882).
+
+## [2.21.8] - 2026-11-25
+
+### Fixed
+
+- a check whose command dies of a signal it sent itself (SIGTERM, SIGINT, SIGHUP) while Workit received none is recorded `failed` with the signal named, not `interrupted`; when Workit was signalled but the command exited with its own code, that code is recorded; `interrupted` remains only when Workit was signalled and the command died of that signal (or 128+it), and a different signal is named alongside the one Workit received (#881).
+
+## [2.21.7] - 2026-11-25
+
+### Fixed
+
+- `workit git commit -- <path>` no longer fails in a linked worktree when the path is staged in part and a pre-commit hook stashes unstaged changes (lefthook <2.2: "failed to save all unstaged changes: exit status 129"); while the hooks run, the file holds its staged content and its unstaged rest is put back afterwards. A commit killed in between leaves the rest under the git dir's `workit/unstaged-*`: `workit doctor` reports it (`unstaged_backups`) and the new `workit gc --unstaged [--apply]` puts back each file still at its staged content, never one edited since (#907).
+
+## [2.21.6] - 2026-11-25
+
+### Fixed
+
+- `pr merge`'s base-red hint (likely flaky or broken) reads the previous base run of the same workflow, not just any job with the same name, so a second workflow with the same display name no longer swaps flaky and broken (#928).
+- `pr merge`'s changelog-only auto rebase no longer pushes when the base already contains the PR head (the PR landed meanwhile): it puts the branch back at the PR head, pushes nothing and points to `workit pr status`; if the branch cannot be put back it fails with the exact `git reset --keep <head>` to run (#928).
+- `workit git rebase` and `pr merge`'s auto rebase always fetch the base and read it from `refs/remotes/<remote>/<branch>`, so a local branch literally named `origin/main` can no longer become the base (#928).
+- eval first-try cases no longer fail for harness reasons, and the first-try gate refuses an empty run: the eval world's fake forge accepts pushes into a local bare remote; cases can set a Claude Code permission mode (auto, default, acceptEdits, dontAsk or plan; bypassPermissions is refused); branch-with-dirty-tree is graded on reaching --carry; spawn-model cases fill {{model}} and {{roleModel}} from each leg's own config and run on Claude Code and OpenCode; an empty case selection exits 2 and a gate that graded no case fails (#902).
+
+## [2.21.5] - 2026-11-25
+
+### Fixed
+
+- a failed `workit upgrade` host step names its command, exit code (or timeout) and the last lines of its output, redacted; a failed `codex plugin marketplace upgrade` is retried once after a short pause; after a failed Codex step the role agents still install from the newest cached plugin, and each skipped dependent step is listed with its reason; the Codex fix line is now `workit upgrade --hosts=codex` (#900).
+
+## [2.21.4] - 2026-11-25
+
+### Fixed
+
+- `workit fanout worktree create` gives each slice worktree its own frozen install from its lockfile (`bun install --frozen-lockfile`, `pnpm install --frozen-lockfile`, `yarn install --immutable`/`--frozen-lockfile`, `npm ci`) instead of linking the main checkout's `node_modules`, which could drift from the lockfile and fail tests only in slice worktrees (#934). When the package manager is missing, or the install fails or outlives `--install-timeout` (default 5m), the install's whole process tree is killed and the worktree is linked instead; the create output, `--json` (`deps`), the brief's `DEPS:` line and the verifier SPAWN line say LINKED. `--deps link` links on purpose; the workspace keys `fanout.deps` and `fanout.installTimeout` set both, and the flags override them.
+
+## [2.21.1] - 2026-11-21
+
+### Fixed
+
+- `workit feedback` drafts and redacted forge, CI and check output mask the value after a secret-named flag (`--password x`, `--client-secret=x`, `--API-KEY "a b"`) and keep the flag name (#930).
+
+## [2.21.0] - 2026-11-21
+
+### Added
+
+- `youtrack.autoHosts` scopes `youtrack.writes: auto` to named YouTrack hosts: a raw `ytrack` write passes unasked only as a plain call whose `--host` is allowed (no host named is refused with the `--host` retry; another host asks), and `workit youtrack` verbs post unasked only when their target (the workspace `youtrack.baseUrl`, else youtrack.json's) is allowed. The key is sealed: only your terminal can widen it. `workit doctor` warns on `writes: auto` without `autoHosts`.
+
+## [2.20.7] - 2026-11-20
+
+### Fixed
+
+- `workit feedback` without `--verb` and `--exit-file` fills both in from the session's last failing Workit verb (under a day old), and redacts Windows-style relative paths such as `src\app\main.ts` (#916).
+
+## [2.20.6] - 2026-11-19
+
+### Fixed
+
+- A second GitHub workflow with the same display name no longer covers a red base check or hides a failing run from the PR's CI gate; a `--base-red-ok` reason given on a PR that already fixes the red base is recorded and reported as not needed (#920).
+
+## [2.20.5] - 2026-11-19
+
+### Fixed
+
+- The heavy-check queue serves the shortest measured run first (a waiter queued 5 min goes ahead of newer ones); a check measured under 30 s or declared `"heavy": "io"` (`--io` ad hoc) runs without a slot while memory allows; `workit lock status` shows each waiter's own last run (#884).
+
+## [2.20.4] - 2026-11-19
+
+### Fixed
+
+- `workit pr merge` on a PR that conflicts with its base only in the changelog rebases it with the changelog merge driver, pushes it with `--force-with-lease` and stops, printing `workit ci wait` and the same merge as the next commands; any other conflict refuses with an exact `workit git rebase` command (#923).
+
+## [2.20.3] - 2026-11-19
+
+### Fixed
+
+- `workit pr merge`: base_red no longer blocks the PR that fixes the base. A PR whose head contains the red base tip and passes every check red there (same workflow / job name) merges without `--base-red-ok` and says it fixes the red base check; a head behind that tip is told to rebase (#906).
+
+## [2.20.2] - 2026-11-19
+
+### Fixed
+
+- Exit-pipe gate reads a group's pipe from the tokenizer, so `(ls) | wc; (workit ci wait); … | tail` and `$(…) | head` are no longer denied while nested piped groups still are; the heavy rewrite keeps a `| tail -N > file` stdout file as `workit check --heavy -- <cmd> > file` (a stderr redirect is dropped with the filter); `workit feedback` masks secrets in kept tracker URLs, asks on `--session=`, `npx`/`bunx @workit-dev/cli`, wrapper (`env`, `sudo`, `timeout`) and `bash -c`/`eval` spellings, keeps only real Workit package paths and a few public names unredacted, and tells the user to read the draft before `--post`; script-glob matching in the dependency-bump lane no longer backtracks (#913, #916, #918).
+
+## [2.20.1] - 2026-11-19
+
+### Fixed
+
+- The CHANGELOG merge driver no longer re-adds Unreleased entries that a rebased branch moved into a version section since the branches split, so a rolled changelog keeps each entry once; it reports any entries it leaves out on stderr (#896).
+
+## [2.20.0] - 2026-11-19
+
 ### Changed
 
 - Review lanes: a GitHub workflow edit that only appends `&& <command>` (or `&& (<command> || echo "<text>")`) to a step's `run:` string, or to a command-named input (`lint_command`, `*-cmd`, `script`) of a job-level reusable workflow call, no longer forces the full lane (on its own it stays at least focused; action inputs never soften), and a dependency bump (manifest version pins, lockfiles, a changelog line, new package.json scripts, such workflow appends) lands on self, where the author's `--self` verdict counts only with green CI on the head; `workit pr status --json` names `dependency-bump` in `verdict.lane.reasons` and `classification`, and a refused workflow's full-lane reason says why (#891).
+
+## [2.19.0] - 2026-11-19
+
+### Added
+
+- `workit feedback "<title>" --body-file <f|->` drafts a report of Workit friction for the Workit tracker from any workspace: Workit version, host, the failing verb (`--verb`) and its exit text (`--exit-file`), redacted by default (remote URLs, paths, branch, ticket IDs, org, repo and workspace names; `--include-workspace` keeps them), with a duplicate search that offers `--comment <n>`. Nothing is posted without `--post`, which uses `--account` or `feedback.account` in workspaces.json, never the workspace's own account by default, and which Claude Code and Codex ask about and Cursor never allows; an unposted draft is saved under `workit dir retros`. The agent contract offers it once per distinct problem, and a workspace with `"feedback": "off"` hides that line and makes the verb refuse
+
+## [2.18.1] - 2026-11-19
+
+### Changed
+
 - `workit release tag <v> --wait` waits for CI still running on the trunk tip (as right after a merge), then tags on green, within one `--timeout` for the CI and release waits; red CI is still refused, and a `ci_pending` refusal without `--wait` ends in `Retry as: workit release tag <v> --wait`
 - `workit ci wait --branch <b>` on a branch with no PR (the trunk after a merge) waits on its push runs, exit 0 green and 1 red; `--ref <b>` is accepted as the same flag, and `workit issue create` takes `--add-label` as `pr create` does
 - A Workit verb whose exit code is its answer (`ci wait`, `check`, `pr merge`, `release …`, `verify-delivery`) piped into `tail` or `head` is denied by the shell hook on every host, naming the unpiped call
+
+## [2.18.0] - 2026-11-19
+
+### Added
+
+- `workit release tag v<version>` for repositories that release by pushing a tag (GoReleaser and similar, github-flow). Under the `release` grant it fetches the trunk and refuses red or pending CI, an existing tag or a missing `## [X.Y.Z]` changelog section, each with its fix. It then tags the remote trunk without moving a local branch, pushes the tag, and with `--wait` watches the release workflow until the forge release exists. `workit release notes edit <tag> --from-changelog` puts a published release's changelog section at the top of its notes; a rerun changes nothing. Both are covered by `workit setup`'s allow rules, so an agent releases without raw git or a permission prompt
+
+## [2.17.1] - 2026-11-19
+
+### Fixed
+
+- Under Claude Code auto mode, Workit no longer rewrites a Bash call (which auto mode refuses as a changed input): `cd <dir> && workit …`, a heavy command, a raw dev server and `npx @workit-dev/cli …` are denied with the exact call to send instead (`Retry as: workit --cwd <dir> …`, `workit check --heavy -- <cmd>`, `workit run --bg -- <cmd>`, `workit …`). Outside auto mode they are rewritten as before.
+
+## [2.17.0] - 2026-11-19
+
+### Changed
+
 - `workit fanout status` with no plan recorded says so and exits 0; a bare `workit fanout worktree create` of an unknown slice is refused when several plans could be meant, and `status` prefers the lead's real plan over its one-slice unplanned plans
 - `--name` on `workit fanout brief|check|status|worktree` takes a plan file as well as a plan name and registers it in the same call, once: a file already registered is used as stored, keeping its `--trunk` and name (`--plan` is the same flag); an unknown name lists the registered plans and registers the single matching file in `workit dir plans`; `workit fanout plan` refuses a slice branch the workspace branch policy refuses and names the allowed one
 - Claude Code spawn gate: a `workit:implementer` prompt that names a Workit-made worktree by its path, or a brief file holding a `WORKTREE:` line, now runs; a prompt naming none is denied in two lines whose `Retry as:` is the exact ad-hoc `workit fanout worktree create` call
+
+### Added
+
+- `workit fanout worktree create a b c` makes several slices at once and prints, per slice, its `WORKTREE:` line and the exact spawn (Claude Code: `subagent_type: "workit:implementer"`, `run_in_background`, a model only when the tier differs from the agent file, and a pointer prompt that runs `workit fanout brief <slice> --name <plan>`), so the slice name is enough to spawn an implementer on the first try
+- `workit fanout worktree create <slice> [--branch <type>/<slug>] [--base <b>] [--tier <t>]` makes one slice no plan holds without a plan file (a one-slice plan named after it on the first `feature/`, `feat/` or `fix/` branch the policy allows, listed by `workit fanout status`)
+
+## [2.16.2] - 2026-11-19
+
+### Fixed
+
+- The natural CLI call works on the first try, and each remaining refusal ends in an exact `Retry as:`: `pr create` takes `--add-label`/`--add-reviewer`, a positional issue, `--changelog "<Section>: <entry>"` (adds, commits and pushes the missing entry in the same call) and says the 100-character title limit with a shortened retry, and warns when `--issue` names an umbrella issue with open sub-issues (use `--refs`); `--body-file -` reads a pipe whose writer starts late; `workit git rebase origin/main` rebases onto it; `workit git branch` without `--base` starts from the real trunk; a `wip:` commit subject is accepted; a pre-commit hook naming `bun run format` ends with the `workit check --name fix -- …` route; an unknown `workit check <name>` lists the configured checks; `ledger verdict --branch b` from the parent of the repos records in the one repo that has `b`; `ledger list --limit n` works and `ledger finding` runs `workit finding`; `workit issue create|comment --repo owner/name` works outside a git checkout in a folder a workspace covers; `workit install|uninstall --help` prints help; a `workit youtrack` write piped into `tail` or `head` is still asked on itself.
+
+## [2.16.1] - 2026-11-19
+
+### Fixed
+
+- Session teardown runs its detached `workit stop` in Workit's state directory instead of the session's checkout, so on Windows the stop no longer keeps the checkout busy after a session ends (#904).
+
+## [2.16.0] - 2026-11-18
+
+### Changed
+
 - ytrack (0.6.0 and newer) owns its agent skill: `workit init`, `workit setup` and `workit upgrade` no longer install or refresh it, `workit doctor` reads `ytrack skill list --json` and names `ytrack skill install`, `ytrack skill sync` or `ytrack upgrade`, and once `~/.agents/skills/ytrack` exists `workit upgrade` removes the Codex, Cursor, OpenCode and Pi copies an older Workit installed
+
+## [2.15.0] - 2026-11-18
+
+### Added
+
+- When a session ends (Claude Code SessionEnd, Cursor sessionEnd, Pi quit, OpenCode session deleted), Workit stops the processes and automation browsers that session started, without delaying the host; a continuing session (clear, resume, compact), a subagent's end and kept processes stop nothing. A session start also stops leftovers whose owning session is gone, at most once every 10 minutes. Codex sends no subagent id on SessionEnd, so its processes are stopped by that start-time sweep instead.
+
+## [2.14.0] - 2026-11-18
+
+### Changed
+
 - Workit roles spawn by name with the right model on the first try: each host carries the role's model and effort in its own agent definition (Claude Code `workit:verifier|reviewer|implementer`, new `workit:decider` on Fable at high effort and `workit:babysitter`; OpenCode registers `workit-<role>` agents from your `models.roles`; Codex and Cursor agent files). A model you name on a spawn always wins, so `Explore` on another model just runs. A configured model that differs from the agent file is filled outside auto mode or noted under auto mode; a spawn is denied over model or effort only with `models.enforce: "strict"`. `workit models show` prints how each host applies each role.
 - GitHub release notes start with the release's CHANGELOG.md entries, above
   the list of PR titles, and the release moves them from [Unreleased] into a
   `## [x.y.z] - date` section. Every `workit-dev-v*` release since 1.0.0 is
   split out into its own section here.
-
-### Added
-
-- `workit changelog roll` moves each [Unreleased] entry into the release whose tag first holds it, and `workit changelog release <x.y.z> [--date] [--notes-out <file|->] [--no-write]` cuts that version's section and writes its entries as release notes; both are local only (no forge, no grant) for semantic-release, release-please and GoReleaser pipelines
-- `youtrack.autoHosts` scopes `youtrack.writes: auto` to named YouTrack hosts: a raw `ytrack` write passes unasked only as a plain call whose `--host` is allowed (no host named is refused with the `--host` retry; another host asks), and `workit youtrack` verbs post unasked only when their target (the workspace `youtrack.baseUrl`, else youtrack.json's) is allowed. The key is sealed: only your terminal can widen it. `workit doctor` warns on `writes: auto` without `autoHosts`.
-- `workit feedback "<title>" --body-file <f|->` drafts a report of Workit friction for the Workit tracker from any workspace: Workit version, host, the failing verb (`--verb`) and its exit text (`--exit-file`), redacted by default (remote URLs, paths, branch, ticket IDs, org, repo and workspace names; `--include-workspace` keeps them), with a duplicate search that offers `--comment <n>`. Nothing is posted without `--post`, which uses `--account` or `feedback.account` in workspaces.json, never the workspace's own account by default, and which Claude Code and Codex ask about and Cursor never allows; an unposted draft is saved under `workit dir retros`. The agent contract offers it once per distinct problem, and a workspace with `"feedback": "off"` hides that line and makes the verb refuse
-- `workit fanout worktree create a b c` makes several slices at once and prints, per slice, its `WORKTREE:` line and the exact spawn (Claude Code: `subagent_type: "workit:implementer"`, `run_in_background`, a model only when the tier differs from the agent file, and a pointer prompt that runs `workit fanout brief <slice> --name <plan>`), so the slice name is enough to spawn an implementer on the first try
-- `workit fanout worktree create <slice> [--branch <type>/<slug>] [--base <b>] [--tier <t>]` makes one slice no plan holds without a plan file (a one-slice plan named after it on the first `feature/`, `feat/` or `fix/` branch the policy allows, listed by `workit fanout status`)
-- When a session ends (Claude Code SessionEnd, Cursor sessionEnd, Pi quit, OpenCode session deleted), Workit stops the processes and automation browsers that session started, without delaying the host; a continuing session (clear, resume, compact), a subagent's end and kept processes stop nothing. A session start also stops leftovers whose owning session is gone, at most once every 10 minutes. Codex sends no subagent id on SessionEnd, so its processes are stopped by that start-time sweep instead.
-- `workit release tag v<version>` for repositories that release by pushing a tag (GoReleaser and similar, github-flow). Under the `release` grant it fetches the trunk and refuses red or pending CI, an existing tag or a missing `## [X.Y.Z]` changelog section, each with its fix. It then tags the remote trunk without moving a local branch, pushes the tag, and with `--wait` watches the release workflow until the forge release exists. `workit release notes edit <tag> --from-changelog` puts a published release's changelog section at the top of its notes; a rerun changes nothing. Both are covered by `workit setup`'s allow rules, so an agent releases without raw git or a permission prompt
-
-### Fixed
-
-- two Workit processes moving an old folder store at once can no longer both take over its stale lock; one mover wins and a fresh lock is never removed (#892).
-- `pr merge`'s base-red hint (likely flaky or broken) reads the previous base run of the same workflow, not just any job with the same name, so a second workflow with the same display name no longer swaps flaky and broken (#928).
-- `pr merge`'s changelog-only auto rebase no longer pushes when the base already contains the PR head (the PR landed meanwhile): it puts the branch back at the PR head, pushes nothing and points to `workit pr status`; if the branch cannot be put back it fails with the exact `git reset --keep <head>` to run (#928).
-- `workit git rebase` and `pr merge`'s auto rebase always fetch the base and read it from `refs/remotes/<remote>/<branch>`, so a local branch literally named `origin/main` can no longer become the base (#928).
-- eval first-try cases no longer fail for harness reasons, and the first-try gate refuses an empty run: the eval world's fake forge accepts pushes into a local bare remote; cases can set a Claude Code permission mode (auto, default, acceptEdits, dontAsk or plan; bypassPermissions is refused); branch-with-dirty-tree is graded on reaching --carry; spawn-model cases fill {{model}} and {{roleModel}} from each leg's own config and run on Claude Code and OpenCode; an empty case selection exits 2 and a gate that graded no case fails (#902).
-- `workit fanout worktree create` gives each slice worktree its own frozen install from its lockfile (`bun install --frozen-lockfile`, `pnpm install --frozen-lockfile`, `yarn install --immutable`/`--frozen-lockfile`, `npm ci`) instead of linking the main checkout's `node_modules`, which could drift from the lockfile and fail tests only in slice worktrees (#934). When the package manager is missing, or the install fails or outlives `--install-timeout` (default 5m), the install's whole process tree is killed and the worktree is linked instead; the create output, `--json` (`deps`), the brief's `DEPS:` line and the verifier SPAWN line say LINKED. `--deps link` links on purpose; the workspace keys `fanout.deps` and `fanout.installTimeout` set both, and the flags override them.
-- `workit feedback` without `--verb` and `--exit-file` fills both in from the session's last failing Workit verb (under a day old), and redacts Windows-style relative paths such as `src\app\main.ts` (#916).
-- A second GitHub workflow with the same display name no longer covers a red base check or hides a failing run from the PR's CI gate; a `--base-red-ok` reason given on a PR that already fixes the red base is recorded and reported as not needed (#920).
-- `workit pr merge` on a PR that conflicts with its base only in the changelog rebases it with the changelog merge driver, pushes it with `--force-with-lease` and stops, printing `workit ci wait` and the same merge as the next commands; any other conflict refuses with an exact `workit git rebase` command (#923).
-- The CHANGELOG merge driver no longer re-adds Unreleased entries that a rebased branch moved into a version section since the branches split, so a rolled changelog keeps each entry once; it reports any entries it leaves out on stderr (#896).
-- Under Claude Code auto mode, Workit no longer rewrites a Bash call (which auto mode refuses as a changed input): `cd <dir> && workit …`, a heavy command, a raw dev server and `npx @workit-dev/cli …` are denied with the exact call to send instead (`Retry as: workit --cwd <dir> …`, `workit check --heavy -- <cmd>`, `workit run --bg -- <cmd>`, `workit …`). Outside auto mode they are rewritten as before.
-- Session teardown runs its detached `workit stop` in Workit's state directory instead of the session's checkout, so on Windows the stop no longer keeps the checkout busy after a session ends (#904).
-- The natural CLI call works on the first try, and each remaining refusal ends in an exact `Retry as:`: `pr create` takes `--add-label`/`--add-reviewer`, a positional issue, `--changelog "<Section>: <entry>"` (adds, commits and pushes the missing entry in the same call) and says the 100-character title limit with a shortened retry, and warns when `--issue` names an umbrella issue with open sub-issues (use `--refs`); `--body-file -` reads a pipe whose writer starts late; `workit git rebase origin/main` rebases onto it; `workit git branch` without `--base` starts from the real trunk; a `wip:` commit subject is accepted; a pre-commit hook naming `bun run format` ends with the `workit check --name fix -- …` route; an unknown `workit check <name>` lists the configured checks; `ledger verdict --branch b` from the parent of the repos records in the one repo that has `b`; `ledger list --limit n` works and `ledger finding` runs `workit finding`; `workit issue create|comment --repo owner/name` works outside a git checkout in a folder a workspace covers; `workit install|uninstall --help` prints help; a `workit youtrack` write piped into `tail` or `head` is still asked on itself.
-- Exit-pipe gate reads a group's pipe from the tokenizer, so `(ls) | wc; (workit ci wait); … | tail` and `$(…) | head` are no longer denied while nested piped groups still are; the heavy rewrite keeps a `| tail -N > file` stdout file as `workit check --heavy -- <cmd> > file` (a stderr redirect is dropped with the filter); `workit feedback` masks secrets in kept tracker URLs, asks on `--session=`, `npx`/`bunx @workit-dev/cli`, wrapper (`env`, `sudo`, `timeout`) and `bash -c`/`eval` spellings, keeps only real Workit package paths and a few public names unredacted, and tells the user to read the draft before `--post`; script-glob matching in the dependency-bump lane no longer backtracks (#913, #916, #918).
-- `workit pr merge`: base_red no longer blocks the PR that fixes the base. A PR whose head contains the red base tip and passes every check red there (same workflow / job name) merges without `--base-red-ok` and says it fixes the red base check; a head behind that tip is told to rebase (#906).
-- The heavy-check queue serves the shortest measured run first (a waiter queued 5 min goes ahead of newer ones); a check measured under 30 s or declared `"heavy": "io"` (`--io` ad hoc) runs without a slot while memory allows; `workit lock status` shows each waiter's own last run (#884).
-- `workit feedback` drafts and redacted forge, CI and check output mask the value after a secret-named flag (`--password x`, `--client-secret=x`, `--API-KEY "a b"`) and keep the flag name (#930).
-- a failed `workit upgrade` host step names its command, exit code (or timeout) and the last lines of its output, redacted; a failed `codex plugin marketplace upgrade` is retried once after a short pause; after a failed Codex step the role agents still install from the newest cached plugin, and each skipped dependent step is listed with its reason; the Codex fix line is now `workit upgrade --hosts=codex` (#900).
-- `workit git commit -- <path>` no longer fails in a linked worktree when the path is staged in part and a pre-commit hook stashes unstaged changes (lefthook <2.2: "failed to save all unstaged changes: exit status 129"); while the hooks run, the file holds its staged content and its unstaged rest is put back afterwards. A commit killed in between leaves the rest under the git dir's `workit/unstaged-*`: `workit doctor` reports it (`unstaged_backups`) and the new `workit gc --unstaged [--apply]` puts back each file still at its staged content, never one edited since (#907).
-- a check whose command dies of a signal it sent itself (SIGTERM, SIGINT, SIGHUP) while Workit received none is recorded `failed` with the signal named, not `interrupted`; when Workit was signalled but the command exited with its own code, that code is recorded; `interrupted` remains only when Workit was signalled and the command died of that signal (or 128+it), and a different signal is named alongside the one Workit received (#881).
-- `workit issue create|comment|close --repo` refuses a repository outside the workspace's own forge owners (the checkout's, the tracker's, `vcs.account`, `remotes` claims; on GitLab the full namespace) unless the workspace's sealed `externalRepos` lists it, which only the user sets at their terminal (`workit workspace set <ws> externalRepos=…`); `workit pr ready|edit` on another author's PR now need `--others-pr --reason`, like `pr merge`; the Claude Code auto-mode allow line says the CLI enforces these scopes and names `issue close` (#882).
-- A fork's PRs stay in the fork when `gh repo set-default <owner>/<fork>` is set (`remote.<name>.gh-resolved` = `base`): the `pr` and `ci` verbs used to target the fork's parent repository (or an `upstream` remote) whatever the checkout said, so a PR for a branch pushed to a working fork opened on the parent. On GitHub the default order is now the `gh repo set-default` remote, then `upstream`, then the fork parent, then the push repository. Only `gh-resolved` = `base` in the repository's own config counts (a legacy `owner/repo` value, a global or an included key is ignored, by the verbs and the raw-git hook alike), a GitLab checkout ignores the key, and a default naming a missing remote, one with several push URLs, or a remote on another host or forge is skipped with a note naming the remote and why (#937).
-- the raw-git hook judges a gh default, upstream or origin remote by its push URL, with pushInsteadOf and insteadOf applied as git remote get-url --push does, so it picks the base repository the forge verbs pick.
-- Outside a git repository Workit keeps a folder's ledger, tasks, plans, retros, handoffs and notes in its state dir (<state>/folders/<folder>-<hash>), never in <folder>/.workit; an older .workit there moves once with a one-line note (team config stays), and workit doctor row stray_workit lists any left in the cwd or its parents (#892).
 
 ## [2.13.0] - 2026-11-18
 
@@ -1765,7 +1918,38 @@ acquire --actor <id>` binds a writer to a Codex session the hook matches,
 
 - Hardened workflow boundaries, repository mutations, changelog roots, branch contracts, handoff selection, runtime safety, and time-log validation.
 
-[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.13.0...HEAD
+[Unreleased]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.3...HEAD
+[2.22.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.2...workit-dev-v2.22.3
+[2.22.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.1...workit-dev-v2.22.2
+[2.22.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.22.0...workit-dev-v2.22.1
+[2.22.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.10...workit-dev-v2.22.0
+[2.21.10]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.9...workit-dev-v2.21.10
+[2.21.9]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.8...workit-dev-v2.21.9
+[2.21.8]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.7...workit-dev-v2.21.8
+[2.21.7]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.6...workit-dev-v2.21.7
+[2.21.6]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.5...workit-dev-v2.21.6
+[2.21.5]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.4...workit-dev-v2.21.5
+[2.21.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.3...workit-dev-v2.21.4
+[2.21.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.21.0...workit-dev-v2.21.1
+[2.21.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.7...workit-dev-v2.21.0
+[2.20.7]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.6...workit-dev-v2.20.7
+[2.20.6]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.5...workit-dev-v2.20.6
+[2.20.5]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.4...workit-dev-v2.20.5
+[2.20.4]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.3...workit-dev-v2.20.4
+[2.20.3]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.2...workit-dev-v2.20.3
+[2.20.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.1...workit-dev-v2.20.2
+[2.20.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.20.0...workit-dev-v2.20.1
+[2.20.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.19.0...workit-dev-v2.20.0
+[2.19.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.18.1...workit-dev-v2.19.0
+[2.18.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.18.0...workit-dev-v2.18.1
+[2.18.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.17.1...workit-dev-v2.18.0
+[2.17.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.17.0...workit-dev-v2.17.1
+[2.17.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.16.2...workit-dev-v2.17.0
+[2.16.2]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.16.1...workit-dev-v2.16.2
+[2.16.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.16.0...workit-dev-v2.16.1
+[2.16.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.15.0...workit-dev-v2.16.0
+[2.15.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.14.0...workit-dev-v2.15.0
+[2.14.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.13.0...workit-dev-v2.14.0
 [2.13.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.12.0...workit-dev-v2.13.0
 [2.12.0]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.1...workit-dev-v2.12.0
 [2.11.1]: https://github.com/BrainerVirus/workit/compare/workit-dev-v2.11.0...workit-dev-v2.11.1

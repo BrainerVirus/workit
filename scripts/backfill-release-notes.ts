@@ -14,31 +14,52 @@
 // nothing. --apply runs `gh release edit` / `gh release create` (the created
 // release is never marked latest).
 //
-// --changelog puts each release's CHANGELOG.md entries (scripts/roll-changelog.ts
-// attributes every entry to the first tag holding it) above the PR-title list
-// of its existing GitHub release, between workit:changelog markers. Re-running
-// replaces the block, so a second run changes nothing:
+// --changelog puts each release's CHANGELOG.md entries (`workit changelog
+// roll` attributes every entry to the first tag holding it) above the PR-title
+// list of its existing GitHub release, between the `<!-- workit:changelog
+// <tag> -->` markers `workit changelog release --notes-format github` writes.
+// Re-running replaces the block (a legacy `workit:changelog:start` one
+// included), so a second run changes nothing:
 //
 //   bun scripts/backfill-release-notes.ts --changelog --dry-run            # every workit-dev-v* release
 //   bun scripts/backfill-release-notes.ts --changelog workit-dev-v1.0.0..workit-dev-v2.11.0 --apply
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { TAG_PREFIX } from "../packages/workit-core/scripts/analyze-release-scope";
 import {
-  GITHUB_BODY_LIMIT,
-  changelogBlock,
-  defaultExec,
-  githubBase,
+  type Exec,
   moreLink,
+  releaseBlock,
   rollChangelog,
   tagSnapshots,
   versionGroups,
-  withChangelogBlock,
-} from "./roll-changelog";
+} from "../packages/workit-core/src/core/changelog-roll";
+import { mergeReleaseBody } from "../packages/workit-core/src/core/release-tag";
 
-/** Runs a command and returns its stdout; throws on a non-zero exit. */
-export type Exec = (cmd: string, args: string[], input?: string) => string;
+export type { Exec };
+
+/** GitHub rejects a release body over this many characters. */
+export const GITHUB_BODY_LIMIT = 125_000;
+
+/** `https://github.com/<owner>/<repo>` for an origin remote URL, or null. */
+const githubBase = (remote: string): string | null => {
+  const match = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(remote.trim());
+  return match ? `https://github.com/${match[1]}/${match[2]}` : null;
+};
+
+const defaultExec =
+  (root: string): Exec =>
+  (cmd, args, input) =>
+    execFileSync(cmd, args, {
+      cwd: root,
+      encoding: "utf8",
+      input,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 120_000,
+    });
 
 export interface BackfillChange {
   tag: string;
@@ -207,7 +228,7 @@ export function backfillChangelogNotes(opts: {
   const { root, apply = false } = opts;
   const log = opts.log ?? ((line: string) => console.log(line));
   const exec: Exec = opts.exec ?? defaultExec(root);
-  const snapshots = tagSnapshots(exec);
+  const snapshots = tagSnapshots(exec, TAG_PREFIX);
   const tags = snapshots.map((s) => s.tag);
   let [start, end] = [0, tags.length - 1];
   if (opts.range !== undefined) {
@@ -217,6 +238,7 @@ export function backfillChangelogNotes(opts: {
   }
   const text = rollChangelog(readFileSync(resolve(root, "CHANGELOG.md"), "utf8"), {
     snapshots,
+    tagPrefix: TAG_PREFIX,
   }).text;
   const base = githubBase(exec("git", ["remote", "get-url", "origin"]));
   const changes: ChangelogBackfill[] = [];
@@ -231,13 +253,20 @@ export function backfillChangelogNotes(opts: {
     }
     const groups = versionGroups(text, version);
     const entries = groups.reduce((n, g) => n + g.entries.length, 0);
-    const rest = withChangelogBlock(body, "");
-    const block = changelogBlock(groups, {
-      cap: GITHUB_BODY_LIMIT - BODY_MARGIN - rest.length,
+    const current = body.replace(/\r\n/g, "\n").trim();
+    const rest = mergeReleaseBody(current, tag, "");
+    if (!rest.ok) {
+      log(`${tag}: skip, ${rest.error}`);
+      continue;
+    }
+    const block = releaseBlock(groups, {
+      tag,
+      cap: GITHUB_BODY_LIMIT - BODY_MARGIN - rest.data.length,
       more: moreLink(base, tags[i - 1], tag),
     });
-    const next = withChangelogBlock(body, block);
-    if (next === body.replace(/\r\n/g, "\n").trim()) {
+    const merged = mergeReleaseBody(current, tag, block);
+    const next = block === "" || !merged.ok ? rest.data : merged.data;
+    if (next === current) {
       unchanged += 1;
       log(`${tag}: unchanged (${plural(entries)})`);
       continue;

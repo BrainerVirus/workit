@@ -1,24 +1,25 @@
 // CHANGELOG.md entries in GitHub release notes: the release's generateNotes and
-// prepare commands (release.config.cjs) and the backfill of published releases,
-// against a temp repo with real tags and a fake `gh`. The roll itself is core's
-// (test/workit-core/changelog-roll.test.ts).
+// prepare commands (release.config.cjs, `workit changelog release` from source)
+// and the backfill of published releases, against a temp repo with real tags
+// and a fake `gh`. The roll itself is core's (test/workit-core/changelog-roll.test.ts).
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { backfillChangelogNotes, releaseNotes } from "@/scripts/backfill-release-notes";
+import { runChangelogRoll } from "@/packages/workit-core/src/core/changelog-roll";
 import {
   GITHUB_BODY_LIMIT,
-  MARKER_END,
-  MARKER_START,
-  changelogBlock,
-  main,
-  parseGroups,
-  withChangelogBlock,
-} from "@/scripts/roll-changelog";
+  backfillChangelogNotes,
+  releaseNotes,
+} from "@/scripts/backfill-release-notes";
+import { stripsWorkitKey } from "@/test/shared/helpers/env";
 import { REPO_ROOT } from "@/test/shared/helpers/packages";
+
+const START = (version: string) => `<!-- workit:changelog workit-dev-v${version} -->`;
+const END = "<!-- /workit:changelog -->";
 
 const HEAD = `# Changelog
 
@@ -108,7 +109,7 @@ function makeRepo(history: Array<{ text: string; tag?: string; date: string }>) 
   return { cwd, git, read, exec };
 }
 
-/** The roll-changelog command release.config.cjs runs for `step`, run in `cwd`. */
+/** The command release.config.cjs runs for `step`, run in `cwd` with a throwaway HOME. */
 function releaseStep(cwd: string, step: "generateNotesCmd" | "prepareCmd", version: string) {
   const config = createRequire(import.meta.url)(path.join(REPO_ROOT, "release.config.cjs")) as {
     plugins: unknown[];
@@ -119,18 +120,33 @@ function releaseStep(cwd: string, step: "generateNotesCmd" | "prepareCmd", versi
   const [bin = "", script = "", ...args] = String(entry[1][step])
     .replace("${nextRelease.version}", version)
     .split(" ");
+  const home = path.join(cwd, "..", ".home");
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env))
+    if (!stripsWorkitKey(key) && !key.startsWith("XDG_")) env[key] = value;
+  Object.assign(env, {
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_STATE_HOME: path.join(home, ".state"),
+    XDG_DATA_HOME: path.join(home, ".data"),
+    XDG_CACHE_HOME: path.join(home, ".cache"),
+    GIT_CONFIG_GLOBAL: path.join(cwd, "..", ".gitconfig"),
+    GIT_CONFIG_NOSYSTEM: "1",
+  });
   const run = spawnSync(bin, [path.join(REPO_ROOT, script), ...args], {
     cwd,
     encoding: "utf8",
+    env,
     timeout: 60_000,
   });
   if (run.status !== 0) throw new Error(`${step}: ${run.stderr}`);
-  return run.stdout.trim();
+  return run.stdout;
 }
 
 /** What @semantic-release/github receives: each generateNotes output, joined like semantic-release does. */
 async function releaseBody(cwd: string, version: string): Promise<string> {
-  const changelogNotes = releaseStep(cwd, "generateNotesCmd", version);
+  const changelogNotes = releaseStep(cwd, "generateNotesCmd", version).trim();
   const commitNotes = await releaseNotes(REPO_ROOT, {
     commits: [{ hash: "a".repeat(40), message: "feat(cli): add gamma (#12)" }],
     lastRelease: { gitTag: "workit-dev-v2.11.0" },
@@ -140,14 +156,12 @@ async function releaseBody(cwd: string, version: string): Promise<string> {
   return [changelogNotes, commitNotes].filter(Boolean).join("\n\n");
 }
 
-const silent = { out: () => {}, err: () => {} };
-
 test("Given [Unreleased] entries and release 2.12.0, When the release's generateNotes and prepare commands run, Then CHANGELOG.md gets [2.12.0] with them, [Unreleased] is empty and the body starts with them before the PR-title list", async () => {
   const repo = makeRepo(HISTORY);
   const body = await releaseBody(repo.cwd, "2.12.0");
-  expect(
-    body.startsWith(`${MARKER_START}\n### Added\n\n${GAMMA}\n${MARKER_END}\n\n## [2.12.0](`),
-  ).toBe(true);
+  expect(body.startsWith(`${START("2.12.0")}\n### Added\n\n${GAMMA}\n${END}\n\n## [2.12.0](`)).toBe(
+    true,
+  );
   expect(body).toContain("### Features\n\n* **cli:** add gamma");
   expect(body).not.toContain("Alpha");
 
@@ -165,28 +179,15 @@ test("Given [Unreleased] entries and release 2.12.0, When the release's generate
 
 test("Given a release with no [Unreleased] entries, Then the body is the PR-title list only and CHANGELOG.md is unchanged", async () => {
   const repo = makeRepo(HISTORY.slice(0, 2));
-  main([], { root: repo.cwd, exec: repo.exec, ...silent });
+  runChangelogRoll({ cwd: repo.cwd, tagPrefix: "workit-dev-v", write: true, exec: repo.exec });
   const rolled = repo.read();
   expect(rolled).toContain("## [Unreleased]\n\n## [2.11.0] - 2026-03-01");
 
   const body = await releaseBody(repo.cwd, "2.12.0");
   expect(body.startsWith("## [2.12.0](")).toBe(true);
-  expect(body).not.toContain(MARKER_START);
+  expect(body).not.toContain("workit:changelog");
   releaseStep(repo.cwd, "prepareCmd", "2.12.0");
   expect(repo.read()).toBe(rolled);
-});
-
-test("Given entries longer than the cap, Then the block keeps those that fit and ends with the compare link", () => {
-  const entries = Array.from({ length: 50 }, (_, i) => `- Entry ${i} ${"x".repeat(90)}`);
-  const groups = parseGroups(["### Added", "", ...entries]);
-  const more = "the full comparison [a...b](https://github.com/acme/widget/compare/a...b)";
-  const block = changelogBlock(groups, { cap: 1000, more });
-  expect(block.length).toBeLessThanOrEqual(1000);
-  expect(block).toContain("- Entry 0 ");
-  expect(block).not.toContain("- Entry 49 ");
-  expect(block.endsWith(`not listed here; see ${more}._\n${MARKER_END}`)).toBe(true);
-  // No room even for the closing line: no block rather than an oversized body.
-  expect(changelogBlock(groups, { cap: 100, more })).toBe("");
 });
 
 // --- backfill of published releases -------------------------------------------------
@@ -217,7 +218,8 @@ function fakeGh(bodies: Record<string, string>, git: (cmd: string, args: string[
 test("Given the backfill run twice against a fake release API, Then the first puts each release's entries above its PR-title list and the second changes nothing", () => {
   const repo = makeRepo(HISTORY);
   const bodies = {
-    "workit-dev-v2.10.0": PR_LIST("2.10.0", "2.9.0"),
+    // Cut by the release script before `workit changelog release`: a legacy block.
+    "workit-dev-v2.10.0": `<!-- workit:changelog:start -->\n- stale\n<!-- workit:changelog:end -->\n\n${PR_LIST("2.10.0", "2.9.0")}`,
     "workit-dev-v2.11.0": PR_LIST("2.11.0", "2.10.0"),
   };
   const gh = fakeGh(bodies, repo.exec);
@@ -229,9 +231,11 @@ test("Given the backfill run twice against a fake release API, Then the first pu
   });
   expect(first.map((c) => c.tag)).toEqual(["workit-dev-v2.10.0", "workit-dev-v2.11.0"]);
   expect(bodies["workit-dev-v2.11.0"]).toBe(
-    `${MARKER_START}\n### Fixed\n\n${BETA}\n${MARKER_END}\n\n${PR_LIST("2.11.0", "2.10.0").trim()}`,
+    `${START("2.11.0")}\n### Fixed\n\n${BETA}\n${END}\n\n${PR_LIST("2.11.0", "2.10.0").trim()}`,
   );
-  expect(bodies["workit-dev-v2.10.0"]).toContain(`### Added\n\n${ALPHA_REWRAPPED}\n${MARKER_END}`);
+  expect(bodies["workit-dev-v2.10.0"]).toBe(
+    `${START("2.10.0")}\n### Added\n\n${ALPHA_REWRAPPED}\n${END}\n\n${PR_LIST("2.10.0", "2.9.0").trim()}`,
+  );
 
   const lines: string[] = [];
   const second = backfillChangelogNotes({
@@ -293,7 +297,7 @@ test("Given `--changelog --dry-run` on the command line, Then it prints the summ
   );
   expect(run.status).toBe(0);
   expect(run.stdout).toContain(
-    "workit-dev-v2.10.0: would update, 1 changelog entry (body 16 -> 150 chars)",
+    "workit-dev-v2.10.0: would update, 1 changelog entry (body 16 -> 160 chars)",
   );
   expect(run.stdout).toContain("dry run: 2 release(s) to update, 0 unchanged");
   expect(() => readFileSync(edits, "utf8")).toThrow();
@@ -321,9 +325,61 @@ test("Given a body that would pass 125,000 characters, Then the backfill cuts th
   expect(body).toEndWith("* a fix (#2)");
 });
 
-test("A release body keeps one changelog block: replacing it drops the old one, an empty block removes it", () => {
-  const block = `${MARKER_START}\n- new\n${MARKER_END}`;
-  const old = `${MARKER_START}\n- old\n${MARKER_END}\n\n## [1.0.0]\n\n* a\n`;
-  expect(withChangelogBlock(old, block)).toBe(`${block}\n\n## [1.0.0]\n\n* a`);
-  expect(withChangelogBlock(old, "")).toBe("## [1.0.0]\n\n* a");
+// --- dry-run parity with the retired scripts/roll-changelog.ts ----------------------
+
+const LEGACY_START = "<!-- workit:changelog:start -->";
+const LEGACY_END = "<!-- workit:changelog:end -->";
+const ENTRIES = Array.from(
+  { length: 400 },
+  (_, i) => `- Entry ${i}: ${"z".repeat(40 + ((i * 37) % 90))}\n  continued ${i}.`,
+);
+const NO_LINKS = (text: string) => text.replace(/\n\[Unreleased\]:[^]*$/, "");
+const PARITY: Record<string, { history: Array<{ text: string; tag?: string }>; sha256: string }> = {
+  // sha256 of `bun scripts/roll-changelog.ts --notes 2.12.0` on each fixture,
+  // recorded before the script was deleted (#889).
+  entries: {
+    history: [
+      { text: changelog([ALPHA], []), tag: "workit-dev-v2.10.0" },
+      { text: changelog([ALPHA], [BETA]), tag: "workit-dev-v2.11.0" },
+      { text: changelog([GAMMA, ALPHA_REWRAPPED], [BETA, "- Delta: two\n  lines."]) },
+    ],
+    sha256: "fdbed2d5676910b35e846c913777afc20e985792034b2c52dd3a7fae791e6407",
+  },
+  "no compare links": {
+    history: [
+      { text: NO_LINKS(changelog([ALPHA], [])), tag: "workit-dev-v2.11.0" },
+      { text: NO_LINKS(changelog([GAMMA, ALPHA], [])) },
+    ],
+    sha256: "6d6b07da74e2a49d09c7a9785e900ff016b67376683a2c87973116ac59937b92",
+  },
+  "cut at 24,000 characters": {
+    history: [
+      { text: changelog([ALPHA], []), tag: "workit-dev-v2.11.0" },
+      {
+        text: changelog([GAMMA, ...ENTRIES.slice(0, 200), ALPHA], ENTRIES.slice(200)),
+      },
+    ],
+    sha256: "321bf2bb3a20442cac44df769b33dffc0638797c030d1013f92ab2943c96892f",
+  },
+  "first release, cut": {
+    history: [{ text: changelog(ENTRIES.slice(0, 300), []) }],
+    sha256: "8d5d0e4486f0fb0d1a99b7d792b22fd188d716f7a7cd43189f9250d24e233036",
+  },
+};
+
+for (const [name, fixture] of Object.entries(PARITY))
+  test(`Given ${name}, When the release's generateNotesCmd runs, Then its notes are byte-identical to the old script's once the marker lines are mapped back`, () => {
+    const repo = makeRepo(fixture.history.map((step) => ({ ...step, date: "2026-02-03" })));
+    const notes = releaseStep(repo.cwd, "generateNotesCmd", "2.12.0");
+    const lines = notes.split("\n");
+    expect(lines[0]).toBe(START("2.12.0"));
+    expect(lines.at(-2)).toBe(END);
+    const legacy = [LEGACY_START, ...lines.slice(1, -2), LEGACY_END, ""].join("\n");
+    expect(createHash("sha256").update(legacy).digest("hex")).toBe(fixture.sha256);
+    expect(notes.length).toBeLessThanOrEqual(24_001);
+  });
+
+test("Given no entries for the release, When generateNotesCmd runs, Then it prints nothing, like the old script", () => {
+  const repo = makeRepo(HISTORY.slice(0, 2));
+  expect(releaseStep(repo.cwd, "generateNotesCmd", "2.12.0")).toBe("");
 });

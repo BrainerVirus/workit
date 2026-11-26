@@ -366,6 +366,39 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "Given a release body with a legacy workit:changelog:start block, When workit release notes edit --from-changelog runs twice, Then the body holds exactly one block in its place and the second run writes nothing",
+  async () => {
+    const { repo, head } = tagRepo({ release: true });
+    repo.git("--git-dir", repo.bare, "tag", "v1.2.3", head);
+    let body =
+      "<!-- workit:changelog:start -->\n### Added\n\n- the old widget\n<!-- workit:changelog:end -->\n\n## Changelog\n\n* abc123 feat: the widget";
+    const replay = forge({
+      [RELEASE]: () =>
+        JSON.stringify({
+          id: 5,
+          tag_name: "v1.2.3",
+          body,
+          html_url: "https://github.com/o/r/releases/tag/v1.2.3",
+        }),
+      "PATCH repos/o/r/releases/5": () => JSON.stringify({ id: 5 }),
+    });
+    const edit = () =>
+      run(["release", "notes", "edit", "v1.2.3", "--from-changelog", "--json"], repo.cwd);
+    const first = await edit();
+    expect(first.code, first.stdout + first.stderr).toBe(0);
+    expect(first.json().data.changed).toBe(true);
+    body = replay.inputs[0].body.body;
+    expect(body).toBe(
+      "<!-- workit:changelog v1.2.3 -->\n### Added\n\n- the widget\n<!-- /workit:changelog -->\n\n## Changelog\n\n* abc123 feat: the widget",
+    );
+    const second = await edit();
+    expect(second.code, second.stdout + second.stderr).toBe(0);
+    expect(second.json().data.changed).toBe(false);
+    expect(replay.inputs).toHaveLength(1);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
   "Given no changelog section for the tag, When workit release notes edit runs, Then it is refused and the forge is never written",
   async () => {
     const { repo, head } = tagRepo({ release: true });

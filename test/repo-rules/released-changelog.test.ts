@@ -70,7 +70,7 @@ test("Given an [Unreleased] entry a workit-dev-v tag already holds, When the rep
   expect(code).toBe(0);
   expect(err).toBe("");
   expect(out).toBe(
-    "warning: CHANGELOG.md:8:1 workit/released-changelog: this [Unreleased] entry already shipped in 1.0.0. Fix: run `bun scripts/roll-changelog.ts`, which moves every released entry into its version's section. (release notes: no release writes back to main, so 1,200 lines of shipped entries piled up under [Unreleased])",
+    "warning: CHANGELOG.md:8:1 workit/released-changelog: this [Unreleased] entry already shipped in 1.0.0. Fix: run `workit changelog roll`, which moves every released entry into its version's section. (release notes: no release writes back to main, so 1,200 lines of shipped entries piled up under [Unreleased])",
   );
 });
 

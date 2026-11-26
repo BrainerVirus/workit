@@ -162,10 +162,60 @@ type Flushable = {
   write: (chunk: string, done: (error?: Error | null) => void) => boolean;
 };
 
+/** Writes a tracked stream has queued whose callback has not run yet, and who waits for none. */
+const queued = new WeakMap<object, { count: number; idle: Array<() => void> }>();
+
+type Trackable = {
+  write: (...args: never[]) => boolean;
+  on: (event: "error" | "close", listener: () => void) => unknown;
+};
+
+/**
+ * Count each write on `streams` until its callback runs, for flushStreams.
+ * Bun calls an empty write's callback at once and reports `writableLength` 0
+ * while a pipe still holds the rest of a large write, so `write("", cb)`
+ * alone let `process.exit` cut piped output at 64 KiB. An error or close
+ * ends the wait: a reader that is gone takes nothing more.
+ */
+export function trackWrites(
+  streams: readonly Trackable[] = [process.stdout, process.stderr],
+): void {
+  for (const stream of streams) {
+    if (queued.has(stream)) continue;
+    const state = { count: 0, idle: [] as Array<() => void> };
+    queued.set(stream, state);
+    const settle = () => {
+      if (state.count > 0) return;
+      for (const waiter of state.idle.splice(0)) waiter();
+    };
+    const release = () => {
+      state.count = 0;
+      settle();
+    };
+    stream.on("error", release);
+    stream.on("close", release);
+    const write = stream.write.bind(stream) as (...args: unknown[]) => boolean;
+    stream.write = (...args: unknown[]) => {
+      const last = args.length - 1;
+      const callback =
+        typeof args[last] === "function" ? (args[last] as (e?: unknown) => void) : null;
+      state.count++;
+      const done = (error?: unknown) => {
+        state.count = Math.max(0, state.count - 1);
+        settle();
+        callback?.(error);
+      };
+      return write(...(callback ? args.slice(0, last) : args), done);
+    };
+  }
+}
+
 /**
  * Resolve once everything queued on `streams` is handed to the OS, so a
  * `process.exit` after it loses no output when stdout or stderr is a pipe.
- * A stream that never drains (its reader gone) is given up after `timeoutMs`.
+ * A tracked stream (trackWrites) waits for its queued writes' callbacks; any
+ * other for an empty write's. A stream that never drains (its reader gone)
+ * is given up after `timeoutMs`.
  */
 export const flushStreams = async (
   streams: readonly Flushable[] = [process.stdout, process.stderr],
@@ -180,6 +230,12 @@ export const flushStreams = async (
             clearTimeout(timer);
             resolve();
           };
+          const state = queued.get(stream);
+          if (state) {
+            if (state.count === 0) done();
+            else state.idle.push(done);
+            return;
+          }
           try {
             stream.write("", done);
           } catch {

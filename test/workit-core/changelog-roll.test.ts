@@ -4,10 +4,29 @@
 // tags and an empty global git config.
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runChangelogRoll, versionNotes } from "@/packages/workit-core/src/core/changelog-roll";
+import {
+  type Exec,
+  inferTagPrefix,
+  parseGroups,
+  releaseBlock,
+  runChangelogRoll,
+  tagSnapshots,
+  versionNotes,
+} from "@/packages/workit-core/src/core/changelog-roll";
+import { mergeReleaseBody } from "@/packages/workit-core/src/core/release-tag";
 
 const HEAD = `# Changelog
 
@@ -236,4 +255,156 @@ test("Given no changelog file, Then the run fails as not found", () => {
   const repo = makeRepo([]);
   const run = runChangelogRoll({ cwd: repo.cwd, tagPrefix: "v", write: true });
   expect(run).toMatchObject({ ok: false, code: "not_found", path: "CHANGELOG.md" });
+});
+
+test.skipIf(process.platform === "win32")(
+  "Given a CRLF changelog with mode 0640, When rolled, Then it is replaced by a rename that keeps the mode and CRLF and leaves no temp file",
+  () => {
+    const crlf = (text: string) => text.replace(/\n/g, "\r\n");
+    const repo = makeRepo(HISTORY.map((step) => ({ ...step, text: crlf(step.text) })));
+    const file = path.join(repo.cwd, "CHANGELOG.md");
+    chmodSync(file, 0o640);
+    const inode = statSync(file).ino;
+    runChangelogRoll({ cwd: repo.cwd, tagPrefix: "v", write: true });
+    expect(repo.read()).toBe(crlf(ROLLED));
+    expect(statSync(file).mode & 0o777).toBe(0o640);
+    // A new inode: the file was renamed into place, never truncated and rewritten.
+    expect(statSync(file).ino).not.toBe(inode);
+    expect(readdirSync(repo.cwd).filter((name) => name.includes(".tmp"))).toEqual([]);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "Given CHANGELOG.md is a symlink, When rolled, Then the file it points at is rewritten and the link stays",
+  () => {
+    const repo = makeRepo(HISTORY);
+    const real = path.join(repo.cwd, "docs-CHANGELOG.md");
+    writeFileSync(real, repo.read());
+    rmSync(path.join(repo.cwd, "CHANGELOG.md"));
+    symlinkSync("docs-CHANGELOG.md", path.join(repo.cwd, "CHANGELOG.md"));
+    const run = runChangelogRoll({ cwd: repo.cwd, tagPrefix: "v", write: true });
+    expect(run.ok && run.written).toBe(true);
+    expect(readFileSync(real, "utf8")).toBe(ROLLED);
+  },
+);
+
+test("Given a changelog with no [Unreleased] section, Then the run reports it missing and writes nothing", () => {
+  const text = TAIL;
+  const repo = makeRepo([{ text, tag: "v0.1.0", date: "2026-01-01" }]);
+  const run = runChangelogRoll({
+    cwd: repo.cwd,
+    tagPrefix: "v",
+    write: true,
+    release: { version: "0.2.0", date: "2026-02-01" },
+  });
+  expect(run).toMatchObject({ ok: true, unreleased: false, changed: false, written: false });
+  expect(repo.read()).toBe(text);
+});
+
+test("Given a tag prefix with glob characters, Then for-each-ref gets them escaped and only that literal prefix's tags count", () => {
+  const seen: string[][] = [];
+  const exec: Exec = (_cmd, args) => {
+    seen.push(args);
+    return args[0] === "for-each-ref"
+      ? "rel*v1.0.0\t2026-01-01\nrelXv1.1.0\t2026-01-02\n"
+      : "# Changelog\n";
+  };
+  const snapshots = tagSnapshots(exec, "rel*v");
+  expect(seen[0]?.at(-1)).toBe("refs/tags/rel\\*v*");
+  expect(snapshots.map((s) => s.tag)).toEqual(["rel*v1.0.0"]);
+  tagSnapshots(exec, "a?b[c]\\");
+  expect(seen.at(-1)?.at(-1)).toBe("refs/tags/a\\?b\\[c]\\\\*");
+});
+
+test("Given --notes-format github, Then the notes are the release's groups between its tag's markers", () => {
+  const repo = makeRepo(HISTORY);
+  const run = runChangelogRoll({
+    cwd: repo.cwd,
+    tagPrefix: "v",
+    write: false,
+    release: { version: "2.12.0", date: "2026-03-06" },
+    notesFormat: "github",
+  });
+  expect(run.ok && run.notes).toBe(
+    `<!-- workit:changelog v2.12.0 -->\n### Added\n\n${GAMMA}\n<!-- /workit:changelog -->\n`,
+  );
+});
+
+test("Given entries longer than the cap, Then the release block keeps those that fit and ends with the compare link", () => {
+  const entries = Array.from({ length: 50 }, (_, i) => `- Entry ${i} ${"x".repeat(90)}`);
+  const groups = parseGroups(["### Added", "", ...entries]);
+  const more = "the full comparison [a...b](https://github.com/acme/widget/compare/a...b)";
+  const block = releaseBlock(groups, { tag: "v1.0.0", cap: 1000, more });
+  expect(block.length).toBeLessThanOrEqual(1000);
+  expect(block).toStartWith("<!-- workit:changelog v1.0.0 -->\n### Added\n\n- Entry 0 ");
+  expect(block).not.toContain("- Entry 49 ");
+  expect(block).toEndWith(`not listed here; see ${more}._\n<!-- /workit:changelog -->`);
+  // No room even for the closing line: no block rather than an oversized body.
+  expect(releaseBlock(groups, { tag: "v1.0.0", cap: 100, more })).toBe("");
+});
+
+// --- release bodies: one block, legacy markers included ------------------------------
+
+const NEW = "<!-- workit:changelog v1.2.3 -->\n- new\n<!-- /workit:changelog -->";
+const LEGACY = "<!-- workit:changelog:start -->\n- old\n<!-- workit:changelog:end -->";
+const merged = (body: string, block = NEW): string => {
+  const result = mergeReleaseBody(body, "v1.2.3", block);
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+};
+
+test("Given a body with a legacy block, When merged, Then the new block takes its place and a second merge changes nothing", () => {
+  const body = `${LEGACY}\n\n## [1.2.3]\n\n* a`;
+  const once = merged(body);
+  expect(once).toBe(`${NEW}\n\n## [1.2.3]\n\n* a`);
+  expect(merged(once)).toBe(once);
+});
+
+test("Given a body with both a legacy and a current block, When merged, Then exactly one block is left, at the first one's place", () => {
+  const once = merged(`${LEGACY}\n\n## [1.2.3]\n\n${NEW.replace("new", "older")}\n\n* a`);
+  expect(once).toBe(`${NEW}\n\n## [1.2.3]\n\n* a`);
+  expect(once.split("workit:changelog").length - 1).toBe(2);
+  expect(merged(once)).toBe(once);
+});
+
+test("Given an empty block, When merged, Then every old block is removed", () => {
+  expect(merged(`${LEGACY}\n\n## [1.2.3]\n\n* a\n`, "")).toBe("## [1.2.3]\n\n* a");
+});
+
+test("Given a legacy start marker without its end, When merged, Then it is refused naming the legacy end marker", () => {
+  const result = mergeReleaseBody("<!-- workit:changelog:start -->\n- old\n\n* a", "v1.2.3", NEW);
+  expect(result.ok).toBe(false);
+  expect(!result.ok && result.error).toContain("release_body_unterminated");
+  expect(!result.ok && result.unblock).toContain("<!-- workit:changelog:end -->");
+});
+
+// --- the tag prefix when none is configured ------------------------------------------
+
+const tagsExec =
+  (tags: string[]): Exec =>
+  (_cmd, args) => {
+    if (args[0] !== "for-each-ref") throw new Error(`unexpected git ${args.join(" ")}`);
+    return `${tags.join("\n")}\n`;
+  };
+const headings = (...versions: string[]) =>
+  `# Changelog\n\n## [Unreleased]\n\n${versions.map((v) => `## [${v}] - 2026-01-01\n\n- x ${v}\n`).join("\n")}`;
+
+test("Given old v14 tags (v2.x among them) beside workit-dev-v2 tags and 2.x headings, Then the inferred prefix is workit-dev-v", () => {
+  const exec = tagsExec([
+    "v2.0.0",
+    "v2.1.0",
+    "v14.6.1",
+    "workit-dev-v2.0.0",
+    "workit-dev-v2.1.0",
+    "workit-dev-v2.2.0",
+  ]);
+  expect(inferTagPrefix(exec, headings("2.2.0", "2.1.0", "2.0.0"))).toBe("workit-dev-v");
+});
+
+test("Given a plain v repo, Then the inferred prefix stays v; with no heading a tag holds, or no headings, it falls back to v", () => {
+  expect(inferTagPrefix(tagsExec(["v1.0.0", "v1.1.0"]), headings("1.1.0", "1.0.0"))).toBe("v");
+  expect(inferTagPrefix(tagsExec(["app-v1.0.0"]), headings("3.0.0"))).toBe("v");
+  expect(inferTagPrefix(tagsExec(["app-v1.0.0"]), headings())).toBe("v");
+  // Bare x.y.z tags are a family too.
+  expect(inferTagPrefix(tagsExec(["1.0.0", "v0.9.0"]), headings("1.0.0"))).toBe("");
 });

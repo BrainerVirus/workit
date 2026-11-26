@@ -20,18 +20,22 @@ module.exports = {
     ],
     // The release's hand-written CHANGELOG.md entries lead its notes: notes
     // from each generateNotes plugin are joined in list order, so this block
-    // (between workit:changelog markers, at most RELEASE_BLOCK_CAP characters)
-    // comes before the PR-title list below; it prints nothing when the release
-    // has no entries. prepare moves the entries from [Unreleased] into
-    // `## [<version>] - <date>` in this checkout only: a release never writes
-    // back to main, which gets the same split from a PR running
-    // `bun scripts/roll-changelog.ts` (entries belong to the first tag holding
-    // them, so an unrolled main never repeats a shipped entry).
+    // (between `<!-- workit:changelog <tag> -->` markers, at most 24,000
+    // characters) comes before the PR-title list below; it prints nothing when
+    // the release has no entries. prepare moves the entries from [Unreleased]
+    // into `## [<version>] - <date>` in this checkout only: a release never
+    // writes back to main, which gets the same split from a PR running
+    // `workit changelog roll` (entries belong to the first tag holding them, so
+    // an unrolled main never repeats a shipped entry). Both run the CLI from
+    // this checkout's source, never from npm: the release is cut from the code
+    // it ships.
     [
       "@semantic-release/exec",
       {
-        generateNotesCmd: "bun scripts/roll-changelog.ts --notes ${nextRelease.version}",
-        prepareCmd: "bun scripts/roll-changelog.ts --release ${nextRelease.version}",
+        generateNotesCmd:
+          "bun packages/workit-cli/src/main.ts changelog release ${nextRelease.version} --no-write --notes-out - --notes-format github --tag-prefix workit-dev-v",
+        prepareCmd:
+          "bun packages/workit-cli/src/main.ts changelog release ${nextRelease.version} --tag-prefix workit-dev-v",
       },
     ],
     // Conventional Commits preset formats notes; analyze-release-scope owns

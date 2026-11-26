@@ -69,7 +69,7 @@ forge, no grant and no Workit setup, and run headless in any CI.
 
 ```bash
 workit changelog roll [--path CHANGELOG.md] [--tag-prefix v] [--preview]
-workit changelog release 1.4.0 [--date 2026-11-25] [--notes-out notes.md] [--no-write]
+workit changelog release 1.4.0 [--date 2026-11-25] [--notes-out notes.md] [--notes-format github] [--no-write]
 ```
 
 - `roll` moves each `[Unreleased]` entry into the section of the first release tag whose
@@ -80,18 +80,31 @@ workit changelog release 1.4.0 [--date 2026-11-25] [--notes-out notes.md] [--no-
 - `release <x.y.z>` rolls, then moves the rest into `## [x.y.z] - <date>` (`--date`, default
   today in UTC) and fixes the compare links when the file has them. `--notes-out <file>` writes
   that version's entries as Markdown (`### Fixed` and its bullets) for the forge release body;
-  `--notes-out -` prints them on stdout and everything else on stderr. `--no-write` leaves the
-  changelog as it is and still writes the notes.
+  `--notes-out -` prints them on stdout and everything else on stderr. `--notes-format github`
+  puts them between `<!-- workit:changelog <tag> -->` and `<!-- /workit:changelog -->` and cuts
+  them at 24,000 characters with a link to the compare view, for a GitHub release body that
+  other generated notes follow; `workit release notes edit --from-changelog` later replaces that
+  block in place. `--no-write` leaves the changelog as it is and still writes the notes.
 - An empty `[Unreleased]` releases nothing: exit 0, the file untouched, no empty `[x.y.z]`
-  heading, empty notes. A rerun of the same release (a retried CI job) changes nothing and
+  heading, empty notes. A changelog with no `[Unreleased]` section says the section is missing,
+  also with exit 0 and nothing written. A rerun of the same release (a retried CI job) changes nothing and
   writes the same notes, read back from the existing `[x.y.z]` section.
-- Tags are `<prefix><x.y.z>`; the prefix is the workspace's release tag prefix (git-flow's
-  `gitflow.prefix.versiontag`, default `v`), or `--tag-prefix`. `--path` names another
-  changelog, such as one package's in a monorepo, relative to the current directory.
+- Tags are `<prefix><x.y.z>`; the prefix is `--tag-prefix`, else the workspace's release tag
+  prefix (`releaseTagPrefix`, or git-flow's `gitflow.prefix.versiontag`). With neither set, it
+  is inferred from the repo's tags: of the tag families that hold the changelog's newest version
+  heading, the one holding the most of its version headings wins (a repo with old `v14.x` tags
+  and `app-v2.x` tags whose headings are 2.x gets `app-v`), else `v`. `workit doctor` uses the
+  same prefix. `--path` names another changelog, such as one package's in a monorepo, relative
+  to the current directory.
 - Nothing is written, exit 1, when the result would double or drop text: an `[Unreleased]`
   entry its release's section already holds (a merge that put back what a roll moved) is named
   by its line (`CHANGELOG.md:12 is already under [1.3.0]`); delete it from `[Unreleased]` and
   rerun. A bad version or date exits 2.
+
+The file is replaced through a temporary file and a rename, keeping its mode and CRLF line
+endings. `workit doctor` warns (`changelog_released`) when `[Unreleased]` holds entries a release
+tag already shipped, with their count and the oldest release, and names `workit changelog roll`;
+it says nothing without release tags, in a shallow clone or without a changelog.
 
 CI clones are often shallow and tagless: fetch the tags first (`fetch-depth: 0` on
 `actions/checkout`, `GIT_DEPTH: 0` on GitLab, or `git fetch --tags`), or `release` moves every
