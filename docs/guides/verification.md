@@ -472,12 +472,14 @@ Write or shell write to them is denied (the ledger guard), and so is a link or
 mount (`ln`, `cp -s|-l`, `install -l`, `rsync --link-dest`, `mount`, `bindfs`,
 and on Windows `mklink` and `New-Item -ItemType SymbolicLink|Junction|HardLink`)
 to them or a dir that holds them. Removing or moving `.git`, `.git/workit` or
-a dir that holds the ledger (`rm -rf`, `mv`, `find -delete` with no name or path test, `Remove-Item`) is
-denied too. Only the host runs Workit's hooks: an agent's shell command that
-runs a hook entry itself (`node "$CLAUDE_PLUGIN_ROOT/bin/workit-hook.mjs"`,
-`bun …/hooks/run.ts`, a Codex or Cursor hook bin) is denied on every host, so
-no agent can feed one a payload that issues a token for a subagent that never
-existed.
+a dir that holds the ledger (`rm -rf`, `mv`, `rsync --delete`, `Remove-Item`, a
+glob such as `.git/w*`, a `find` that deletes ledger entries) is denied too.
+Only the host runs Workit's hooks: an agent's shell command that runs a hook
+entry itself (`node "$CLAUDE_PLUGIN_ROOT/bin/workit-hook.mjs"`,
+`bun …/hooks/run.ts`, a Codex or Cursor hook bin, inside `{ …; }`, `if` or a
+loop, behind `flock`, `su -c` or `tmux`, or through `NODE_OPTIONS`) is denied
+on every host, so no agent can feed one a payload that issues a token for a
+subagent that never existed.
 
 `workit ledger void <id>` of a verdict shared with `--set` also retires the
 set verdict: a void row in the same store, after which it covers no PR in

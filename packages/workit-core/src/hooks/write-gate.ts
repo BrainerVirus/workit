@@ -45,6 +45,7 @@ import {
   workitInvocations,
   type RawInvocation,
 } from "./raw-git";
+import { expandGlob, globPattern } from "./path-glob";
 import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
 import {
   CMD_VAR,
@@ -295,33 +296,43 @@ const editsOf = (input: string[]): string[] | null => {
   }
 };
 
+/** A `find` that deletes: its roots as written and its name, path and regex tests (#984). */
+type FindRemoval = { roots: string[]; tests: Array<[kind: string, pattern: string]> };
+
 /**
  * The paths one simple command removes or moves away (#984): `rm`, `rmdir`, `unlink`, `mv`'s
- * sources, `find … -delete` roots and PowerShell's Remove-Item and Move-Item (and aliases).
+ * sources, `rsync --delete`'s destination and PowerShell's Remove-Item and Move-Item (and
+ * aliases); a `find` that deletes (`-delete`, or `-exec`/`-execdir` running a removal) as `find`.
  */
-const removalsOf = (input: string[]): string[] => {
+const removalsOf = (input: string[]): { files: string[]; find?: FindRemoval } => {
   const [verb = "", ...args] = pastLead(input);
   const name = (verb.split(/[\\/]/).at(-1) ?? "").toLowerCase();
   const files = operands(args);
-  if (/^(?:rm|rmdir|rd|unlink|shred|remove-item|ri|del|erase)$/.test(name)) return files;
+  if (/^(?:rm|rmdir|rd|unlink|shred|remove-item|ri|del|erase)$/.test(name)) return { files };
   if (/^(?:mv|move-item|mi|move)$/.test(name)) {
     const into = valueOf(args, /^(?:-[a-zA-Z]*t|--target-directory=?)(.*)$/s);
-    return into === undefined ? files.slice(0, -1) : files.filter((file) => file !== into);
+    return {
+      files: into === undefined ? files.slice(0, -1) : files.filter((file) => file !== into),
+    };
   }
-  // `find … -delete`, or `-exec`/`-execdir` running a removal, with no name, path or regex test
-  // narrowing it: the roots before its first test.
-  const removes =
-    args.some(
-      (arg, at) =>
-        arg === "-delete" ||
-        (/^-exec(?:dir)?$/.test(arg) &&
-          /^(?:rm|rmdir|unlink|shred|mv)$/.test(commandName(args[at + 1] ?? ""))),
-    ) && !args.some((arg) => /^-i?(?:name|path|wholename|regex)$/.test(arg));
-  if (name === "find" && removes) {
-    const end = args.findIndex((arg) => /^[-(!]/.test(arg));
-    return end === 0 ? ["."] : args.slice(0, end);
+  if (name === "rsync" && args.some((arg) => arg.startsWith("--delete")))
+    return { files: files.slice(-1) };
+  const removes = args.some(
+    (arg, at) =>
+      arg === "-delete" ||
+      (/^-exec(?:dir)?$/.test(arg) &&
+        /^(?:rm|rmdir|unlink|shred|mv)$/.test(commandName(args[at + 1] ?? ""))),
+  );
+  if (name !== "find" || !removes) return { files: [] };
+  const end = args.findIndex((arg) => /^[-(!]/.test(arg));
+  const roots = end === 0 ? ["."] : args.slice(0, end);
+  const tests: Array<[string, string]> = [];
+  for (const [at, arg] of args.entries()) {
+    const kind = /^-i?(name|path|wholename|regex)$/.exec(arg)?.[1];
+    const value = args[at + 1];
+    if (kind && value !== undefined) tests.push([kind, value]);
   }
-  return [];
+  return { files: roots, find: { roots, tests } };
 };
 
 /**
@@ -2399,9 +2410,19 @@ const segmentTargets = (
     if (edits === null) {
       if (dir !== undefined) targets.push(placeholderIn(dir, DIR_TARGET));
     }
-    if (strict === "registry")
-      for (const gone of removalsOf(body))
-        for (const file of atAll(gone)) targets.push(path.join(file, REMOVED_SOURCE));
+    if (strict === "registry") {
+      const { files: gone, find } = removalsOf(body);
+      for (const root of gone)
+        for (const file of atAll(root))
+          targets.push(
+            path.join(
+              file,
+              find
+                ? `${REMOVED_SOURCE}~${encodeURIComponent(JSON.stringify({ root, tests: find.tests }))}`
+                : REMOVED_SOURCE,
+            ),
+          );
+    }
     for (const file of [...segment.redirects, ...(edits ?? [])])
       // PowerShell's `$null` and cmd's `nul` discard what is written to them.
       if (
@@ -2464,9 +2485,13 @@ export const shellMutationTargets = (
     // The registry guard reads a name the command does not set from the hook's own environment.
     const env = new Map(
       strict === "registry"
-        ? [...command.matchAll(/\$\{?([A-Za-z_]\w*)/g)]
-            .filter((match) => !/^(?:OLD)?PWD$/.test(match[1]))
-            .map((match) => [match[1], process.env[match[1]] ?? ""])
+        ? [
+            ...[...command.matchAll(/\$\{?([A-Za-z_]\w*)/g)]
+              .filter((match) => !/^(?:OLD)?PWD$/.test(match[1]))
+              .map((match): [string, string] => [match[1], process.env[match[1]] ?? ""]),
+            // `$PWD` is the dir the command starts in, not the hook's own.
+            ["PWD", cwd] as [string, string],
+          ]
         : [],
     );
     return recording(() => [
@@ -2737,13 +2762,92 @@ const holdsGuarded = (cwd: string, source: string, state: string, configs: strin
  */
 const removesLedger = (cwd: string, source: string, state: string, configs: string[]): boolean => {
   const real = canonical(source);
-  if (/(?:^|[\\/])\.git(?:[\\/]workit)?$/i.test(real)) return true;
+  if (/(?:^|[\\/])\.git(?:[\\/]workit)?$/i.test(real) || inRepoLedger(real)) return true;
   const own = ledgerPath(cwd);
   if (own.ok) {
     const rel = path.relative(real, canonical(path.dirname(own.value)));
     if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return true;
   }
   return holdsGuarded(cwd, source, state, configs);
+};
+
+/** The root as written and the tests a find-removal marker carries. */
+const findTests = (marker: string): { root: string; tests: Array<[string, string]> } | null => {
+  try {
+    return JSON.parse(decodeURIComponent(marker.slice(REMOVED_SOURCE.length + 1)));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Whether a `find` that deletes from `root` (resolved) reaches a ledger: the ledger dir of the
+ * repository `cwd` is in, or one under `root` (`.git/workit/ledger`), when `root` is in or above
+ * it and some entry from `root` down to the ledger's files matches one of its tests (any of them:
+ * `-o` and `!` are not read), or it has none. An unreadable marker counts as reaching.
+ */
+const findReachesLedger = (
+  cwd: string,
+  root: string,
+  find: { root: string; tests: Array<[string, string]> } | null,
+): boolean => {
+  if (find === null) return true;
+  const real = canonical(root);
+  const own = ledgerPath(cwd);
+  const ledgers = [
+    ...(own.ok ? [canonical(path.dirname(own.value))] : []),
+    ...[".git/workit/ledger", "workit/ledger", "ledger"]
+      .map((rel) => path.join(real, rel))
+      .filter((dir) => existsSync(dir) && inRepoLedger(dir)),
+  ];
+  const under = (parent: string, child: string) => {
+    const rel = path.relative(parent, child);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  const patterns = find.tests.map(([kind, pattern]) => ({
+    kind,
+    test:
+      kind === "regex"
+        ? (() => {
+            try {
+              return new RegExp(`^${pattern}$`);
+            } catch {
+              return /(?:)/;
+            }
+          })()
+        : (globPattern(pattern, true) ?? /(?:)/),
+  }));
+  const matches = (entry: string) =>
+    patterns.length === 0 ||
+    patterns.some(({ kind, test }) =>
+      test.test(
+        kind === "name"
+          ? path.basename(entry)
+          : path.join(find.root, path.relative(real, entry)).replaceAll("\\", "/"),
+      ),
+    );
+  for (const ledger of ledgers) {
+    if (!existsSync(ledger) || (!under(real, ledger) && !under(ledger, real))) continue;
+    // The dirs from the root down to the ledger, then the ledger's own entries (bounded).
+    const entries: string[] = [];
+    for (let dir = ledger; under(real, dir) && dir !== real; dir = path.dirname(dir))
+      entries.push(dir);
+    const walk = (dir: string) => {
+      for (const item of readdirSync(dir, { withFileTypes: true })) {
+        if (entries.length > 500) return;
+        const file = path.join(dir, item.name);
+        entries.push(file);
+        if (item.isDirectory()) walk(file);
+      }
+    };
+    try {
+      walk(ledger);
+    } catch {
+      return true;
+    }
+    if (entries.some((entry) => under(real, entry) && matches(entry))) return true;
+  }
+  return false;
 };
 
 /** The first of `targets` an agent tool call writes into a guarded registry, with it. */
@@ -2756,9 +2860,17 @@ const registryTarget = (
   const inodes = {};
   for (const target of targets) {
     const file = homeExpanded(target);
-    if (path.basename(file) === REMOVED_SOURCE) {
-      if (removesLedger(cwd, path.dirname(path.resolve(cwd, file)), state, configs))
-        return { file: target, registry: "removes" };
+    if (path.basename(file).startsWith(REMOVED_SOURCE)) {
+      const marker = path.basename(file);
+      const source = path.dirname(path.resolve(cwd, file));
+      const find = marker === REMOVED_SOURCE ? null : findTests(marker);
+      // A glob is expanded as the shell would before the command runs (`.git/w*`, `.[!.]*`).
+      if (
+        expandGlob(source).some((gone) =>
+          find ? findReachesLedger(cwd, gone, find) : removesLedger(cwd, gone, state, configs),
+        )
+      )
+        return { file: path.join(source, REMOVED_SOURCE), registry: "removes" };
       continue;
     }
     if (path.basename(file) === LINK_SOURCE) {

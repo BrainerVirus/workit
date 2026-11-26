@@ -10,7 +10,7 @@ const HOOK_ENTRY_TEXT =
 const RUNS_SCRIPT =
   /(?:^|[\s;&|(`])(?:\S*[\\/])?(?:node|bunx?|deno|npx|pnpx|tsx|ts-node)(?:\.exe)?\s[^\n;&|]*(?:[*?[$`]|\.[cm]?[jt]s\b)/u;
 const REMOVES_ABOVE =
-  /\b(?:rm|rmdir|rd|mv|unlink|shred|remove-item|move-item|ri|mi|del|erase)\b[^\n;&|]*\s(?:\.{1,2}(?:[\\/\s]|$)|[~/$*?]|[A-Za-z]:)|\bfind\b[^\n;&|]*\s-(?:delete|exec)/iu;
+  /\b(?:rm|rmdir|rd|mv|unlink|shred|rsync|remove-item|move-item|ri|mi|del|erase)\b[^\n;&|]*\s(?:\.{1,2}(?:[\\/\s]|$)|[~/$*?]|[A-Za-z]:)|\bfind\b[^\n;&|]*\s-(?:delete|exec)/iu;
 
 export const mayHitHookGuard = (text: string): boolean => {
   const bare = text.replace(/['"\\]/gu, "");

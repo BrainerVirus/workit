@@ -34,6 +34,7 @@ const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), "workit-hook-entry-")))
 const repo = path.join(tmp, "repo");
 spawnSync("git", ["init", "-q", "-b", "feature/x", repo], { timeout: 30_000 });
 mkdirSync(path.join(repo, ".git", "workit", "ledger"), { recursive: true });
+writeFileSync(path.join(repo, ".git", "workit", "ledger", "ledger.jsonl"), "{}\n");
 mkdirSync(path.join(repo, "sub"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -267,4 +268,188 @@ test("Given the Claude Code launcher's copy of the pre-check, Then its patterns 
     const pattern = new RegExp(`const ${name} =\\s*(\\/.+\\/[a-z]+);`);
     expect(pattern.exec(launcher)?.[1], name).toBe(pattern.exec(core)?.[1] ?? "missing");
   }
+});
+
+// Verdict mwxpl6dz (#989 round 2): the verifier's cases, compound commands first.
+const H = path.join(ROOT, CC, "bin", "workit-hook.mjs");
+const R = path.join(ROOT, RUN);
+const ROUND_2 = [
+  `{ bun ${R} claude_code < ghost.json > ghost.out; }`,
+  `if bun ${R} claude_code < ghost.json > ghost.out; then :; fi`,
+  `{ echo '{}' | node ${H}; }`,
+  `true && { node ${H} < p.json; }`,
+  `for i in 1; do node ${H} < p.json; done`,
+  `while node ${H} < p.json; do break; done`,
+  `until node ${H}; do break; done`,
+  `if true; then :; elif x; then node ${H}; else node ${H}; fi`,
+  `case x in x) node ${H} < p.json;; esac`,
+  `f(){ node ${H}; }; f < p.json`,
+  `function f { node ${H}; }; f`,
+  `( node ${H} )`,
+  `! node ${H}`,
+  `bash -c '{ node ${H}; }'`,
+  `bash -c 'if true; then node ${H}; fi'`,
+  `bash <<'EOF'\n{ node ${H} < p.json; }\nEOF`,
+  `bash <<'EOF'\nfor i in 1; do bun ${R} claude_code; done\nEOF`,
+  // Wrappers Workit does not follow: denied when their words name an entry beside an interpreter.
+  `flock /tmp/l node ${H}`,
+  `flock /tmp/l -c 'node ${H}'`,
+  `script -qc 'node ${H}' /dev/null`,
+  `su -c 'node ${H}' me`,
+  `systemd-run --user node ${H}`,
+  `parallel node ::: ${H}`,
+  `tmux new -d 'node ${H}'`,
+  `screen -dm node ${H}`,
+  `ssh localhost node ${H}`,
+  `docker run --rm -v /:/h node node /h${H}`,
+  `find ${path.dirname(H)} -name 'workit-hook.mjs' -exec node {} +`,
+  `find ${path.dirname(H)} -name 'w*.mjs' -exec node {} + < p.json`,
+  `ls ${H} | xargs node`,
+  `echo ${H} | xargs node`,
+  `awk 'BEGIN{system("node ${H}")}'`,
+  `git -c alias.h='!node ${H}' h`,
+  `workit check --name x -- node ${H}`,
+  `cmd /c "node C:\\p\\bin\\workit-hook.mjs < p.json"`,
+  `cmd /c node C:\\p\\bin\\workit-hook.mjs`,
+  `cmd /c start node C:\\p\\bin\\workit-hook.mjs`,
+  // Options through the environment.
+  `NODE_OPTIONS='--import ${H}' node -e 0`,
+  `NODE_OPTIONS=--import=${H} node -e 0`,
+  `NODE_OPTIONS='-r ${H}' node -e 0`,
+  `export NODE_OPTIONS="--require ${H}"; node -e 0`,
+  `BUN_OPTIONS='--preload ${R}' bun -e 0`,
+  `export BUN_OPTIONS='--preload ${R}' && bun -e 0`,
+  `node --import ${H} -e 0`,
+  `bun --preload ${R} -e 0`,
+  // File descriptors and stdin.
+  `node <(cat ${H})`,
+  `bash <(cat ${H})`,
+  `exec 3<${H}; node /dev/fd/3 < p.json`,
+  `cat ${H} | node`,
+  `cat ${H} | node --input-type=module -`,
+  // Literal substitutions.
+  `P=$(ls ${H}); node "$P" < p.json`,
+  `node "$(printf %s ${H})"`,
+  `node $(echo ${path.dirname(H)}/workit-h)ook.mjs`,
+];
+
+test("Given the round-2 spellings (compound commands, unfollowed wrappers, NODE_OPTIONS, fds), When an agent runs them, Then every host denies them with the hook guard", () => {
+  for (const command of ROUND_2) {
+    expect(hookEntryRun(ROOT, command), command).not.toBeNull();
+    for (const host of HOSTS)
+      expect(
+        deniedBy(shellPre(ROOT, command, host), "workit hook guard"),
+        `${host[1]}: ${command}`,
+      ).toBe(true);
+  }
+  const list = path.join(tmp, "list.txt");
+  writeFileSync(list, `${H}\n`);
+  expect(hookEntryRun(ROOT, `xargs node < ${list}`)).not.toBeNull();
+  for (const command of [
+    `start node C:\\Users\\u\\.claude\\plugins\\cache\\workit\\workit\\1.11.0\\bin\\workit-hook.mjs`,
+    `Start-Process node -ArgumentList 'C:\\p\\bin\\workit-hook.mjs'`,
+    `Get-Content p.json | node $env:CLAUDE_PLUGIN_ROOT\\bin\\workit-hook.mjs`,
+  ])
+    expect(
+      deniedBy(shellPre(ROOT, command, HOSTS[0], "powershell"), "workit hook guard"),
+      command,
+    ).toBe(true);
+});
+
+test("Given a ledger, When a removal names it through a glob, $PWD, find tests or rsync --delete, Then every host denies it", () => {
+  for (const [cwd, command] of [
+    [repo, "rm -rf .git/w*"],
+    [repo, "rm -rf .git/workit/*"],
+    [repo, "cd .git/workit && rm -rf *"],
+    [repo, "cd .git/workit && rm -rf ."],
+    [repo, "rm -rf .[!.]* *"],
+    [repo, "rm -rf $PWD/.git/workit"],
+    [repo, "rm -rf ${PWD}/.git"],
+    [repo, "D=.git/workit; rm -rf $D"],
+    [repo, "rm -rf ./.git/../.git/workit"],
+    [repo, "find .git/workit -name '*.jsonl' -delete"],
+    [repo, "find .git/workit -name '*' -delete"],
+    [repo, "find .git -path '*workit*' -delete"],
+    [repo, "find . -name ledger -exec rm -rf {} +"],
+    [repo, "find .git/workit -type f -exec rm {} +"],
+    [repo, "find . -delete"],
+    [repo, `rsync -a --delete ${tmp}/empty/ .git/workit/`],
+    [repo, `rsync -a --delete-after ${tmp}/empty/ .git/workit/ledger/`],
+  ])
+    for (const host of HOSTS)
+      expect(deniedBy(shellPre(cwd, command, host), "ledger guard"), `${host[1]}: ${command}`).toBe(
+        true,
+      );
+});
+
+// The verifier's ordinary commands (verdict mwxpl6dz): none of them meets either guard.
+const ORDINARY = [
+  `cat ${H}`,
+  `ls -la ${path.dirname(H)}`,
+  "ls ~/.claude/plugins/cache/workit/workit/",
+  `head -50 ${R}`,
+  `grep -n fastAllow ${H}`,
+  `git diff -- ${CC}/bin/workit-hook.mjs`,
+  `wc -l ${R}`,
+  "bun run build",
+  "bun test test/workit-core/hooks/hook-entry.test.ts",
+  "bun test test/workit-claude-code/workit-hook.test.ts",
+  `bun build ${R} --outfile ${tmp}/out.js`,
+  "bun packages/workit-claude-code/scripts/build.ts",
+  "node scripts/build.mjs",
+  "node --test test/*.test.js",
+  "npx tsx src/index.ts",
+  "npx tsc --noEmit",
+  "bunx oxlint",
+  `oxfmt ${CC}/bin/workit-hook.mjs`,
+  `git add ${CC}/bin/workit-hook.mjs && git status`,
+  `cp ${H} ${tmp}/copy-for-reading.txt`,
+  `diff ${H} ${ROOT}/${CC}/bin/workit-hook.mjs`,
+  `node -e "console.log('workit-hook.mjs')"`,
+  "echo node workit-hook.mjs",
+  "workit doctor",
+  "workit check lint",
+  "node --version",
+  "bash scripts/release.sh",
+  "sh ./session-start.sh",
+  "node server.js",
+  "bun run dev",
+  "find . -name '*.tmp' -delete",
+  "find . -name node_modules -prune -o -name '*.log' -exec rm {} +",
+  "find /tmp/build -delete",
+  `find ${tmp}/junk -type f -delete`,
+  "rm -rf node_modules dist",
+  "rm -rf ./build",
+  `rm -rf ${tmp}/junk`,
+  "rm a.txt",
+  "mv a.txt b.txt",
+  `rm -rf ${tmp}/clone`,
+  "rm -rf /tmp/some-test-repo",
+  "rm -rf ./*",
+  "git status",
+  "git checkout -b feature/y",
+  "git stash",
+  "git worktree remove ../wt-x",
+  "git branch -D old",
+  "git rm a.txt",
+  "git mv a.txt c.txt",
+  "git clean -fd",
+  "git reset --hard HEAD~1",
+  "rm -rf ~/.cache/foo",
+  "rm -rf $TMPDIR/x",
+  "mv ~/Downloads/a.zip .",
+  "rm ../sibling/file.txt",
+  "rm -f *.log",
+  'git commit -m "fix: node bin/workit-hook.mjs is the hook"',
+];
+
+test("Given the verifier's ordinary commands in a repository with a ledger, When run, Then neither the hook guard nor the ledger guard denies them", () => {
+  for (const command of ORDINARY)
+    for (const host of HOSTS) {
+      const decision = shellPre(repo, command, host);
+      expect(
+        deniedBy(decision, "workit hook guard") || deniedBy(decision, "ledger guard"),
+        `${host[1]}: ${command}`,
+      ).toBe(false);
+    }
 });
