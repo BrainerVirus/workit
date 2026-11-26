@@ -821,8 +821,8 @@ const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
   return url !== undefined && literalIn(url, repo, true);
 };
 
-/** Names that point git or its pager at config or code Workit does not read: `$HOME/.gitconfig`, `LESSOPEN`. */
-const JUDGE_CONFIG_ENV = /^(?:HOME|XDG_CONFIG_HOME|LESS\w*)$/;
+/** Names that point git or its pager at config or code Workit does not read: `$HOME/.gitconfig`, git/config under an `XDG_*` dir, `LESSOPEN`. */
+const JUDGE_CONFIG_ENV = /^(?:HOME|XDG_\w+|LESS\w*)$/;
 
 /**
  * Whether a judge's git may run after assignment `word` (a prefix, `env`'s or
