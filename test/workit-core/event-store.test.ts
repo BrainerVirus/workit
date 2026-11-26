@@ -687,7 +687,7 @@ test("Given a 2.x .workit store with tasks and recovery copies, When 3.0 runs tw
     success: false,
     critical: ["store"],
   });
-  expect(workspaceRecordSchema.strict().safeParse(marker).success).toBe(false);
+  expect(workspaceRecordSchema.safeParse(marker).success).toBe(false);
   expect(marker.runtime.updatedWith).toBe(runtimeVersion());
 });
 

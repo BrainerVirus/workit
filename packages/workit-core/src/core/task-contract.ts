@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import * as z from "zod";
+import * as z from "./zod-mini";
 import { scopePathCovers } from "./scope-glob";
 
 export const SCHEMA_VERSION = 1 as const;
@@ -33,12 +33,12 @@ const text = z.string().check((ctx) => {
   if (invalidUnicode(ctx.value))
     ctx.issues.push({ code: "custom", input: ctx.value, message: "invalid Unicode", path: [] });
 });
-const id = text.regex(uuidPattern, "expected lowercase UUID");
+const id = text.check(z.regex(uuidPattern, "expected lowercase UUID"));
 /** A full id or an unambiguous lowercase prefix of one (the 8-char short id other surfaces print). */
 export const idRefPattern = /^[0-9a-f][0-9a-f-]{7,35}$/;
-const idRef = text.regex(idRefPattern, "expected a UUID or an id prefix of 8+ characters");
-const digest = text.regex(digestPattern, "expected lowercase SHA-256 digest");
-const revision = text.regex(uuidPattern, "expected UUID revision");
+const idRef = text.check(z.regex(idRefPattern, "expected a UUID or an id prefix of 8+ characters"));
+const digest = text.check(z.regex(digestPattern, "expected lowercase SHA-256 digest"));
+const revision = text.check(z.regex(uuidPattern, "expected UUID revision"));
 const validUtc = (value: string): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/.exec(value);
   if (!match) return false;
@@ -65,8 +65,9 @@ export const utcSchema = text.check((ctx) => {
     });
 });
 const utc = utcSchema;
-const safeInteger = z.number().int().safe();
-const nonEmpty = text.min(1);
+// Classic zod's .int().safe(): .safe() repeats the int check.
+const safeInteger = z.number().check(z.int()).check(z.int());
+const nonEmpty = text.check(z.minLength(1));
 const pathValue = nonEmpty.check((ctx) => {
   if (ctx.value !== "." && (ctx.value.includes("\\") || ctx.value.split("/").includes(".."))) {
     ctx.issues.push({
@@ -77,8 +78,8 @@ const pathValue = nonEmpty.check((ctx) => {
     });
   }
 });
-const nullableDigest = digest.nullable();
-const nullableId = id.nullable();
+const nullableDigest = z.nullable(digest);
+const nullableId = z.nullable(id);
 
 export const hostSchema = z.enum([
   "opencode",
@@ -95,13 +96,11 @@ export type Assurance = z.infer<typeof assuranceSchema>;
 export const outcomeSchema = z.enum(["verified", "accepted_limitations", "stopped"]);
 export type Outcome = z.infer<typeof outcomeSchema>;
 
-export const scopeSchema = z
-  .object({
-    description: text,
-    paths: z.array(pathValue),
-    exclusions: z.array(pathValue),
-  })
-  .strict();
+export const scopeSchema = z.strictObject({
+  description: text,
+  paths: z.array(pathValue),
+  exclusions: z.array(pathValue),
+});
 export type Scope = z.infer<typeof scopeSchema>;
 
 /**
@@ -147,16 +146,14 @@ export const scopeGap = (outer: Scope, inner: Scope): ScopeGap | null => {
 export const scopeCovers = (outer: Scope, inner: Scope): boolean => scopeGap(outer, inner) === null;
 
 export const refSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("file"), path: pathValue, digest: nullableDigest }).strict(),
-  z
-    .object({
-      kind: z.literal("record"),
-      collection: z.enum(["evidence", "decisions", "findings", "workers"]),
-      id,
-    })
-    .strict(),
-  z.object({ kind: z.literal("host"), host: hostSchema, handle: nonEmpty }).strict(),
-  z.object({ kind: z.literal("external"), url: text.url() }).strict(),
+  z.strictObject({ kind: z.literal("file"), path: pathValue, digest: nullableDigest }),
+  z.strictObject({
+    kind: z.literal("record"),
+    collection: z.enum(["evidence", "decisions", "findings", "workers"]),
+    id,
+  }),
+  z.strictObject({ kind: z.literal("host"), host: hostSchema, handle: nonEmpty }),
+  z.strictObject({ kind: z.literal("external"), url: text.check(z.url()) }),
 ]);
 export type Ref = z.infer<typeof refSchema>;
 
@@ -191,9 +188,7 @@ const rewriteUnknown = (value: unknown, map: RefMap): RewriteOutcome => {
   return { drop: false, value };
 };
 
-const rewriteNode = (value: unknown, schema: z.ZodType, map: RefMap): RewriteOutcome => {
-  // Note: this zod version's classic accessors return core types, hence the
-  // casts below. Runtime behavior is identical; only the annotations differ.
+const rewriteNode = (value: unknown, schema: z.core.$ZodType, map: RefMap): RewriteOutcome => {
   if (
     typeof value === "object" &&
     value !== null &&
@@ -203,32 +198,32 @@ const rewriteNode = (value: unknown, schema: z.ZodType, map: RefMap): RewriteOut
     const mapped = map(value as Ref);
     return mapped === null ? { drop: true } : { drop: false, value: mapped };
   }
-  let node: z.ZodType = schema;
+  let node: z.core.$ZodType = schema;
   while (
-    node instanceof z.ZodNullable ||
-    node instanceof z.ZodOptional ||
-    node instanceof z.ZodDefault
+    node instanceof z.core.$ZodNullable ||
+    node instanceof z.core.$ZodOptional ||
+    node instanceof z.core.$ZodDefault
   ) {
-    node = node.unwrap() as z.ZodType;
+    node = node._zod.def.innerType;
   }
   if (node === refSchema) {
     if (!refSchema.safeParse(value).success) return { drop: false, value };
     const mapped = map(value as Ref);
     return mapped === null ? { drop: true } : { drop: false, value: mapped };
   }
-  if (node instanceof z.ZodArray) {
+  if (node instanceof z.core.$ZodArray) {
     if (!Array.isArray(value)) return { drop: false, value };
     const out: unknown[] = [];
     for (const item of value) {
-      const rewritten = rewriteNode(item, node.element as z.ZodType, map);
+      const rewritten = rewriteNode(item, node._zod.def.element, map);
       if (!rewritten.drop) out.push(rewritten.value);
     }
     return { drop: false, value: out };
   }
-  if (node instanceof z.ZodObject) {
+  if (node instanceof z.core.$ZodObject) {
     if (typeof value !== "object" || value === null || Array.isArray(value))
       return { drop: false, value };
-    const shape = node.shape as Record<string, z.ZodType>;
+    const shape = node._zod.def.shape;
     const record = value as Record<string, unknown>;
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(record)) {
@@ -240,8 +235,8 @@ const rewriteNode = (value: unknown, schema: z.ZodType, map: RefMap): RewriteOut
       const child = shape[key];
       const rewritten = rewriteNode(item, child, map);
       if (rewritten.drop) {
-        if (child instanceof z.ZodOptional || child instanceof z.ZodDefault) continue;
-        if (child instanceof z.ZodNullable) {
+        if (child instanceof z.core.$ZodOptional || child instanceof z.core.$ZodDefault) continue;
+        if (child instanceof z.core.$ZodNullable) {
           out[key] = null;
           continue;
         }
@@ -262,22 +257,24 @@ const rewriteNode = (value: unknown, schema: z.ZodType, map: RefMap): RewriteOut
  * through export or import. Unknown (schema-absent) keys are scrubbed the
  * same way. Returns null only when the root itself is an unportable ref.
  */
-export const rewriteRecordRefs = (value: unknown, schema: z.ZodType, map: RefMap): unknown => {
+export const rewriteRecordRefs = (
+  value: unknown,
+  schema: z.core.$ZodType,
+  map: RefMap,
+): unknown => {
   const rewritten = rewriteNode(value, schema, map);
   return rewritten.drop ? null : rewritten.value;
 };
 
-export const provenanceSchema = z
-  .object({
-    kind: z.enum(["host_observed", "agent_reported", "imported"]),
-    host: hostSchema,
-    session: refSchema.nullable(),
-    workerId: nullableId,
-  })
-  .strict();
+export const provenanceSchema = z.strictObject({
+  kind: z.enum(["host_observed", "agent_reported", "imported"]),
+  host: hostSchema,
+  session: z.nullable(refSchema),
+  workerId: nullableId,
+});
 export type Provenance = z.infer<typeof provenanceSchema>;
-export const entrySchema = <T extends z.ZodType>(data: T) =>
-  z.object({ id, recordedAt: utc, provenance: provenanceSchema, data }).strict();
+export const entrySchema = <T extends z.core.SomeType>(data: T) =>
+  z.strictObject({ id, recordedAt: utc, provenance: provenanceSchema, data });
 export type Entry<T> = { id: Id; recordedAt: Utc; provenance: Provenance; data: T };
 
 /** Risk tiers an agent judges; aliases (low, medium, …) are mapped on input. */
@@ -288,80 +285,75 @@ export type RiskTier = (typeof RISK_TIERS)[number];
  * and supporting refs. Everything else is derived deterministically
  * (core/policy/derive.ts).
  */
-export const judgmentSchema = z
-  .object({
-    riskTier: z.enum(RISK_TIERS),
-    behaviorChange: z.boolean(),
-    productChoiceOpen: z.boolean(),
-    needsPlan: z.boolean(),
-    note: text.nullable(),
-    refs: z.array(refSchema),
-  })
-  .strict();
+export const judgmentSchema = z.strictObject({
+  riskTier: z.enum(RISK_TIERS),
+  behaviorChange: z.boolean(),
+  productChoiceOpen: z.boolean(),
+  needsPlan: z.boolean(),
+  note: z.nullable(text),
+  refs: z.array(refSchema),
+});
 export type Judgment = z.infer<typeof judgmentSchema>;
 /** A ≤6.x assessment as stored (facts/signals/…): kept verbatim, never written. */
 export const legacyAssessmentSchema = z.looseObject({});
 
-export const constraintSchema = z
-  .object({
-    id: nonEmpty,
-    kind: z.enum(["host", "project", "user"]),
-    statement: text,
-    source: refSchema,
-    acceptanceAllowed: z.boolean(),
-    requires: z.array(
-      z
-        .object({
-          kind: z.enum(["check", "method", "decision"]),
-          scope: scopeSchema,
-          refs: z.array(refSchema),
-          method: z
-            .enum([
-              "investigation",
-              "challenge",
-              "artifacts",
-              "testing",
-              "verification",
-              "review",
-              "delegation",
-              "continuity",
-              "decisions",
-            ])
-            .nullable(),
-          before: z.enum(["dependent_action", "write", "close"]),
-          dependentAction: text.nullable(),
-        })
-        .strict()
-        .check((ctx) => {
-          const obligation = ctx.value;
-          const validMethod =
-            (obligation.kind === "method" && obligation.method !== null) ||
-            (obligation.kind !== "method" && obligation.method === null);
-          if (!validMethod)
-            ctx.issues.push({
-              code: "custom",
-              input: obligation,
-              message: "method obligations require a method; checks and decisions do not",
-              path: ["method"],
-            });
-        }),
-    ),
-  })
-  .strict();
+export const constraintSchema = z.strictObject({
+  id: nonEmpty,
+  kind: z.enum(["host", "project", "user"]),
+  statement: text,
+  source: refSchema,
+  acceptanceAllowed: z.boolean(),
+  requires: z.array(
+    z
+      .strictObject({
+        kind: z.enum(["check", "method", "decision"]),
+        scope: scopeSchema,
+        refs: z.array(refSchema),
+        method: z.nullable(
+          z.enum([
+            "investigation",
+            "challenge",
+            "artifacts",
+            "testing",
+            "verification",
+            "review",
+            "delegation",
+            "continuity",
+            "decisions",
+          ]),
+        ),
+        before: z.enum(["dependent_action", "write", "close"]),
+        dependentAction: z.nullable(text),
+      })
+      .check((ctx) => {
+        const obligation = ctx.value;
+        const validMethod =
+          (obligation.kind === "method" && obligation.method !== null) ||
+          (obligation.kind !== "method" && obligation.method === null);
+        if (!validMethod)
+          ctx.issues.push({
+            code: "custom",
+            input: obligation,
+            message: "method obligations require a method; checks and decisions do not",
+            path: ["method"],
+          });
+      }),
+  ),
+});
 export type Constraint = z.infer<typeof constraintSchema>;
-export const intentSchema = z
-  .object({ objective: text, scope: scopeSchema, authorityRefs: z.array(refSchema) })
-  .strict();
+export const intentSchema = z.strictObject({
+  objective: text,
+  scope: scopeSchema,
+  authorityRefs: z.array(refSchema),
+});
 export type Intent = z.infer<typeof intentSchema>;
-export const progressSchema = z
-  .object({
-    summary: text,
-    nextAction: text.nullable(),
-    blockers: z.array(
-      z.object({ reason: text, dependentAction: text, refs: z.array(refSchema) }).strict(),
-    ),
-  })
-  .strict();
+export const progressSchema = z.strictObject({
+  summary: text,
+  nextAction: z.nullable(text),
+  blockers: z.array(
+    z.strictObject({ reason: text, dependentAction: text, refs: z.array(refSchema) }),
+  ),
+});
 export type Progress = z.infer<typeof progressSchema>;
 
 export const dimensionSchema = z.enum([
@@ -377,56 +369,49 @@ export const dimensionSchema = z.enum([
 ]);
 export type Dimension = z.infer<typeof dimensionSchema>;
 
-export const policySchema = z
-  .object({
-    policyVersion: text.regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/),
-    inputDigest: digest,
-    requirements: z.array(
-      z
-        .object({
-          id: digest,
-          ruleId: nonEmpty,
-          dimension: dimensionSchema,
-          scope: scopeSchema,
-          reason: text,
-          satisfaction: text,
-          before: z.enum(["dependent_action", "write", "close"]),
-          dependentAction: text.nullable(),
-          acceptanceAllowed: z.boolean(),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
+export const policySchema = z.strictObject({
+  policyVersion: text.check(z.regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)),
+  inputDigest: digest,
+  requirements: z.array(
+    z.strictObject({
+      id: digest,
+      ruleId: nonEmpty,
+      dimension: dimensionSchema,
+      scope: scopeSchema,
+      reason: text,
+      satisfaction: text,
+      before: z.enum(["dependent_action", "write", "close"]),
+      dependentAction: z.nullable(text),
+      acceptanceAllowed: z.boolean(),
+    }),
+  ),
+});
 export type Policy = z.infer<typeof policySchema>;
-export const requirementSchema = policySchema.shape.requirements.element;
+export const requirementSchema = policySchema.shape.requirements._zod.def.element;
 export type Requirement = z.infer<typeof requirementSchema>;
-export const policyChangeSchema = z
-  .object({
-    recordedAt: utc,
-    fromInputDigest: nullableDigest,
-    toInputDigest: digest,
-    added: z.array(digest),
-    retired: z.array(digest),
-    reason: text,
-  })
-  .strict();
+export const policyChangeSchema = z.strictObject({
+  recordedAt: utc,
+  fromInputDigest: nullableDigest,
+  toInputDigest: digest,
+  added: z.array(digest),
+  retired: z.array(digest),
+  reason: text,
+});
 export type PolicyChange = z.infer<typeof policyChangeSchema>;
 
 export const candidateSchema = z
-  .object({
+  .strictObject({
     id: digest,
     scope: scopeSchema,
     completeness: z.enum(["known", "uncertain"]),
     files: z.array(
       z
-        .object({
+        .strictObject({
           path: pathValue,
           kind: z.enum(["file", "symlink", "absent"]),
           digest: nullableDigest,
-          executable: z.boolean().nullable(),
+          executable: z.nullable(z.boolean()),
         })
-        .strict()
         .check((ctx) => {
           const file = ctx.value;
           const valid =
@@ -445,9 +430,7 @@ export const candidateSchema = z
         }),
     ),
     environment: z
-      .array(
-        z.object({ name: nonEmpty, value: text.nullable(), refs: z.array(refSchema) }).strict(),
-      )
+      .array(z.strictObject({ name: nonEmpty, value: z.nullable(text), refs: z.array(refSchema) }))
       .check((ctx) => {
         if (new Set(ctx.value.map((value) => value.name)).size !== ctx.value.length)
           ctx.issues.push({
@@ -457,9 +440,8 @@ export const candidateSchema = z
             path: [],
           });
       }),
-    head: text.nullable(),
+    head: z.nullable(text),
   })
-  .strict()
   .check((ctx) => {
     if (ctx.value.id !== candidateDigest(ctx.value))
       ctx.issues.push({
@@ -477,51 +459,46 @@ export type Candidate = z.infer<typeof candidateSchema>;
  * `evidence.*.data.observation` in `critical`, so an older reader fails
  * closed instead of reading the check without it.
  */
-export const checkObservationSchema = z
-  .object({
-    observer: z.literal("workit_cli"),
-    /** The check name (`--name` or `workit check <name>`); null for an unnamed ad-hoc run. */
-    name: nonEmpty.nullable(),
-    /** The name is configured and argv is exactly its configured command, run from the repo top. */
-    configured: z.boolean(),
-    argv: z.array(text).min(1),
-    shell: z.boolean(),
-    /** Working directory relative to the repository top (posix), `.` at the top. */
-    cwd: nonEmpty,
-    exitCode: safeInteger,
-    durationMs: safeInteger.min(0),
-    timedOut: z.boolean(),
-    head: text.nullable(),
-    /** Worktree tree key before the run; evidence is fresh while the tree key is unchanged. */
-    tree: text.nullable(),
-    dirty: z.boolean().nullable(),
-    /** Cheap stat-cached worktree signal before the run (per-turn freshness; see worktreeSignal). */
-    signal: text.nullable(),
-    /** Tree key after the run; differs from `tree` when the command changed the worktree. */
-    treeAfter: text.nullable(),
-    /** The command changed the worktree: the evidence is stale (fail safe). */
-    modifiedWorktree: z.boolean(),
-    base: text.nullable(),
-    patchId: text.nullable(),
-    /** A minimal environment fingerprint: platform, arch and allowlisted variables. */
-    environment: z
-      .object({
-        platform: nonEmpty,
-        arch: nonEmpty,
-        vars: z.record(nonEmpty, text.nullable()),
-      })
-      .strict(),
-    logDigest: text.nullable(),
-    logRef: text.nullable(),
-    logTail: z.array(text).max(40),
-    ledgerRowId: text.nullable(),
-    /** Set only when a host hook later attests the run (design §2.1 attestation). */
-    attestation: z
-      .object({ host: nonEmpty, session: text.nullable(), agentId: text.nullable() })
-      .strict()
-      .nullable(),
-  })
-  .strict();
+export const checkObservationSchema = z.strictObject({
+  observer: z.literal("workit_cli"),
+  /** The check name (`--name` or `workit check <name>`); null for an unnamed ad-hoc run. */
+  name: z.nullable(nonEmpty),
+  /** The name is configured and argv is exactly its configured command, run from the repo top. */
+  configured: z.boolean(),
+  argv: z.array(text).check(z.minLength(1)),
+  shell: z.boolean(),
+  /** Working directory relative to the repository top (posix), `.` at the top. */
+  cwd: nonEmpty,
+  exitCode: safeInteger,
+  durationMs: safeInteger.check(z.gte(0)),
+  timedOut: z.boolean(),
+  head: z.nullable(text),
+  /** Worktree tree key before the run; evidence is fresh while the tree key is unchanged. */
+  tree: z.nullable(text),
+  dirty: z.nullable(z.boolean()),
+  /** Cheap stat-cached worktree signal before the run (per-turn freshness; see worktreeSignal). */
+  signal: z.nullable(text),
+  /** Tree key after the run; differs from `tree` when the command changed the worktree. */
+  treeAfter: z.nullable(text),
+  /** The command changed the worktree: the evidence is stale (fail safe). */
+  modifiedWorktree: z.boolean(),
+  base: z.nullable(text),
+  patchId: z.nullable(text),
+  /** A minimal environment fingerprint: platform, arch and allowlisted variables. */
+  environment: z.strictObject({
+    platform: nonEmpty,
+    arch: nonEmpty,
+    vars: z.record(nonEmpty, z.nullable(text)),
+  }),
+  logDigest: z.nullable(text),
+  logRef: z.nullable(text),
+  logTail: z.array(text).check(z.maxLength(40)),
+  ledgerRowId: z.nullable(text),
+  /** Set only when a host hook later attests the run (design §2.1 attestation). */
+  attestation: z.nullable(
+    z.strictObject({ host: nonEmpty, session: z.nullable(text), agentId: z.nullable(text) }),
+  ),
+});
 export type CheckObservation = z.infer<typeof checkObservationSchema>;
 /** The record path a task lists in `critical` once it stores a check observation. */
 export const CHECK_OBSERVATION_PATH = "evidence.*.data.observation";
@@ -529,27 +506,26 @@ const evidenceFields = {
   kind: z.enum(["check", "review", "investigation", "artifact"]),
   claim: text,
   requirementIds: z.array(digest),
-  beforeCandidateId: nullableDigest.optional(),
-  candidateId: nullableDigest.optional(),
+  beforeCandidateId: z.optional(nullableDigest),
+  candidateId: z.optional(nullableDigest),
   result: z.enum(["passed", "failed", "missing", "skipped"]),
   summary: text,
   refs: z.array(refSchema),
-  exitCode: safeInteger.nullable(),
-  reviewContext: refSchema.nullable(),
+  exitCode: z.nullable(safeInteger),
+  reviewContext: z.nullable(refSchema),
 };
-export const evidenceSchema = z
-  .object({ ...evidenceFields, observation: checkObservationSchema.optional() })
-  .strict();
+export const evidenceSchema = z.strictObject({
+  ...evidenceFields,
+  observation: z.optional(checkObservationSchema),
+});
 /** Evidence as an agent may submit it: no CLI observation. */
-const reportedEvidenceSchema = z.object(evidenceFields).strict();
+const reportedEvidenceSchema = z.strictObject(evidenceFields);
 export type Evidence = z.infer<typeof evidenceSchema>;
-export const evidenceEvaluationSchema = z
-  .object({
-    evidenceId: id,
-    status: z.enum(["passed", "failed", "missing", "skipped", "stale"]),
-    reason: text,
-  })
-  .strict();
+export const evidenceEvaluationSchema = z.strictObject({
+  evidenceId: id,
+  status: z.enum(["passed", "failed", "missing", "skipped", "stale"]),
+  reason: text,
+});
 export type EvidenceEvaluation = z.infer<typeof evidenceEvaluationSchema>;
 /**
  * A durable decision record (D2, D18): agent-asserted like every other
@@ -558,123 +534,104 @@ export type EvidenceEvaluation = z.infer<typeof evidenceEvaluationSchema>;
  * own permission prompt do that. Legacy keys (`approvedContent`, `displayed`,
  * `standing`, `consumption`) are dropped on read (D17).
  */
-export const decisionSchema = z
-  .object({
-    purpose: z.enum(["design", "action", "limitation", "preference"]),
-    binding: z
-      .object({
-        taskId: id,
-        workspaceId: id,
-        scope: scopeSchema,
-        presented: text,
-        contentRefs: z.array(refSchema),
-        statedChoice: z.object({ ref: text, text: text }).strict().optional(),
-      })
-      .strict(),
-    digest,
-    response: z.enum(["approved", "rejected", "stated"]),
-    requirementIds: z.array(digest),
-    revoked: z.object({ at: utc, reason: text }).strict().nullable(),
-  })
-  .strict();
+export const decisionSchema = z.strictObject({
+  purpose: z.enum(["design", "action", "limitation", "preference"]),
+  binding: z.strictObject({
+    taskId: id,
+    workspaceId: id,
+    scope: scopeSchema,
+    presented: text,
+    contentRefs: z.array(refSchema),
+    statedChoice: z.optional(z.strictObject({ ref: text, text: text })),
+  }),
+  digest,
+  response: z.enum(["approved", "rejected", "stated"]),
+  requirementIds: z.array(digest),
+  revoked: z.nullable(z.strictObject({ at: utc, reason: text })),
+});
 export type Decision = z.infer<typeof decisionSchema>;
 
-export const findingSchema = z
-  .object({
-    claim: text,
-    consequence: text,
-    scope: scopeSchema,
-    candidateId: nullableDigest,
-    refs: z.array(refSchema),
-    disposition: z.enum(["open", "fixed", "dismissed", "deferred"]),
-    resolution: z
-      .object({ reason: text, evidenceIds: z.array(id), decisionIds: z.array(id) })
-      .strict()
-      .nullable(),
-    /** Set when the lead resolved a helper's finding; the helper cannot resolve it again. */
-    leadOwned: z.literal(true).optional(),
-  })
-  .strict();
+export const findingSchema = z.strictObject({
+  claim: text,
+  consequence: text,
+  scope: scopeSchema,
+  candidateId: nullableDigest,
+  refs: z.array(refSchema),
+  disposition: z.enum(["open", "fixed", "dismissed", "deferred"]),
+  resolution: z.nullable(
+    z.strictObject({ reason: text, evidenceIds: z.array(id), decisionIds: z.array(id) }),
+  ),
+  /** Set when the lead resolved a helper's finding; the helper cannot resolve it again. */
+  leadOwned: z.optional(z.literal(true)),
+});
 export type Finding = z.infer<typeof findingSchema>;
-export const assignmentSchema = z
-  .object({
-    role: z.enum(["investigator", "reviewer", "implementer"]),
-    objective: text,
-    scope: scopeSchema,
-    decisionIds: z.array(id),
-    requirementIds: z.array(digest),
-    candidateId: nullableDigest.optional(),
-    stoppingCondition: text,
-  })
-  .strict();
+export const assignmentSchema = z.strictObject({
+  role: z.enum(["investigator", "reviewer", "implementer"]),
+  objective: text,
+  scope: scopeSchema,
+  decisionIds: z.array(id),
+  requirementIds: z.array(digest),
+  candidateId: z.optional(nullableDigest),
+  stoppingCondition: text,
+});
 export type Assignment = z.infer<typeof assignmentSchema>;
-export const workerReportSchema = z
-  .object({
-    outcome: z.enum(["completed", "failed", "cancelled"]),
-    summary: text,
-    evidenceIds: z.array(id),
-    findingIds: z.array(idRef),
-  })
-  .strict();
+export const workerReportSchema = z.strictObject({
+  outcome: z.enum(["completed", "failed", "cancelled"]),
+  summary: text,
+  evidenceIds: z.array(id),
+  findingIds: z.array(idRef),
+});
 export type WorkerReport = z.infer<typeof workerReportSchema>;
-export const workerSchema = z
-  .object({
-    assignment: assignmentSchema,
-    state: z.enum(["assigned", "dispatching", "running", "cancelling", "stopped", "unknown"]),
-    session: refSchema.nullable(),
-    coordinator: refSchema.optional(),
-    report: workerReportSchema.nullable(),
-  })
-  .strict();
+export const workerSchema = z.strictObject({
+  assignment: assignmentSchema,
+  state: z.enum(["assigned", "dispatching", "running", "cancelling", "stopped", "unknown"]),
+  session: z.nullable(refSchema),
+  coordinator: z.optional(refSchema),
+  report: z.nullable(workerReportSchema),
+});
 export type Worker = z.infer<typeof workerSchema>;
-export const closureSchema = z
-  .object({
-    outcome: outcomeSchema,
-    at: utc,
-    summary: text,
-    decisionIds: z.array(id),
-    evidenceIds: z.array(id),
-  })
-  .strict();
+export const closureSchema = z.strictObject({
+  outcome: outcomeSchema,
+  at: utc,
+  summary: text,
+  decisionIds: z.array(id),
+  evidenceIds: z.array(id),
+});
 export type Closure = z.infer<typeof closureSchema>;
-export const runtimeSchema = z
-  .object({
-    createdWith: text.nullable(),
-    updatedWith: text,
-  })
-  .strict();
+export const runtimeSchema = z.strictObject({
+  createdWith: z.nullable(text),
+  updatedWith: text,
+});
 export type RuntimeInfo = z.infer<typeof runtimeSchema>;
-export const taskRecordSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    id,
-    workspaceId: id,
-    revision,
-    createdAt: utc,
-    updatedAt: utc,
-    origin: z.object({ workspaceId: id, taskId: id, exportDigest: digest }).strict().nullable(),
-    intent: entrySchema(intentSchema),
-    constraints: z.array(constraintSchema),
-    status: z.enum(["active", "paused", "closed"]),
-    closure: closureSchema.nullable(),
-    progress: progressSchema,
-    pauseReason: text.nullable().optional(),
-    runtime: runtimeSchema.optional(),
-    /** ≤6.x assessments, read-only history; judgments replace them. */
-    assessments: z.array(entrySchema(legacyAssessmentSchema)),
-    /** Listed in `critical` once written, so an older reader fails closed. */
-    judgments: z.array(entrySchema(judgmentSchema)).optional(),
-    policy: policySchema.nullable(),
-    policyChanges: z.array(policyChangeSchema),
-    candidates: z.array(candidateSchema),
-    evidence: z.array(entrySchema(evidenceSchema)),
-    decisions: z.array(entrySchema(decisionSchema)),
-    findings: z.array(entrySchema(findingSchema)),
-    workers: z.array(entrySchema(workerSchema)),
-    /** Paths a reader must understand; see parseStoredRecord. */
-    critical: z.array(nonEmpty).optional(),
-  })
-  .strict();
+export const taskRecordSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  id,
+  workspaceId: id,
+  revision,
+  createdAt: utc,
+  updatedAt: utc,
+  origin: z.nullable(z.strictObject({ workspaceId: id, taskId: id, exportDigest: digest })),
+  intent: entrySchema(intentSchema),
+  constraints: z.array(constraintSchema),
+  status: z.enum(["active", "paused", "closed"]),
+  closure: z.nullable(closureSchema),
+  progress: progressSchema,
+  pauseReason: z.optional(z.nullable(text)),
+  runtime: z.optional(runtimeSchema),
+  /** ≤6.x assessments, read-only history; judgments replace them. */
+  assessments: z.array(entrySchema(legacyAssessmentSchema)),
+  /** Listed in `critical` once written, so an older reader fails closed. */
+  judgments: z.optional(z.array(entrySchema(judgmentSchema))),
+  policy: z.nullable(policySchema),
+  policyChanges: z.array(policyChangeSchema),
+  candidates: z.array(candidateSchema),
+  evidence: z.array(entrySchema(evidenceSchema)),
+  decisions: z.array(entrySchema(decisionSchema)),
+  findings: z.array(entrySchema(findingSchema)),
+  workers: z.array(entrySchema(workerSchema)),
+  /** Paths a reader must understand; see parseStoredRecord. */
+  critical: z.optional(z.array(nonEmpty)),
+});
 export type TaskRecord = z.infer<typeof taskRecordSchema>;
 
 type Strip = { path: PropertyKey[]; keys: string[] };
@@ -714,7 +671,7 @@ const overlaps = (left: string, right: string) =>
 
 export type StoredRecordParse<T> =
   | { success: true; data: T; stripped: string[] }
-  | { success: false; error: z.ZodError; critical: string[] };
+  | { success: false; error: z.core.$ZodError; critical: string[] };
 
 /**
  * Reader tolerance for stored records (D17). A record written by a newer
@@ -728,7 +685,7 @@ export type StoredRecordParse<T> =
  * that would strip a critical path fails closed instead (`critical` names the
  * paths), so it neither acts on nor rewrites a record it cannot represent.
  */
-export const parseStoredRecord = <S extends z.ZodType>(
+export const parseStoredRecord = <S extends z.ZodMiniType>(
   schema: S,
   value: unknown,
 ): StoredRecordParse<z.output<S>> => {
@@ -776,64 +733,54 @@ export const parseStoredRecord = <S extends z.ZodType>(
   if (critical.length > 0) return { ...first, critical };
   return { success: true, data: parsed.data, stripped: [...new Set(stripped)] };
 };
-export const workspaceRecordSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    id,
-    revision,
-    root: nonEmpty,
-    runtime: runtimeSchema.optional(),
-    /** Paths a reader must understand; see parseStoredRecord. */
-    critical: z.array(nonEmpty).optional(),
-  })
-  .strict();
+export const workspaceRecordSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  id,
+  revision,
+  root: nonEmpty,
+  runtime: z.optional(runtimeSchema),
+  /** Paths a reader must understand; see parseStoredRecord. */
+  critical: z.optional(z.array(nonEmpty)),
+});
 export type WorkspaceRecord = z.infer<typeof workspaceRecordSchema>;
-export const capabilitySchema = z
-  .object({
-    name: nonEmpty,
-    surface: nonEmpty,
-    assurance: assuranceSchema,
-    reason: text,
-    refs: z.array(refSchema),
-  })
-  .strict();
+export const capabilitySchema = z.strictObject({
+  name: nonEmpty,
+  surface: nonEmpty,
+  assurance: assuranceSchema,
+  reason: text,
+  refs: z.array(refSchema),
+});
 export type Capability = z.infer<typeof capabilitySchema>;
-export const requirementEvaluationSchema = z
-  .object({
-    requirementId: digest,
-    status: z.enum(["satisfied", "unsatisfied", "accepted_limitation", "unavailable"]),
-    evidenceIds: z.array(id),
-    decisionIds: z.array(id),
-    reason: text,
-  })
-  .strict();
+export const requirementEvaluationSchema = z.strictObject({
+  requirementId: digest,
+  status: z.enum(["satisfied", "unsatisfied", "accepted_limitation", "unavailable"]),
+  evidenceIds: z.array(id),
+  decisionIds: z.array(id),
+  reason: text,
+});
 export type RequirementEvaluation = z.infer<typeof requirementEvaluationSchema>;
-export const taskViewSchema = z
-  .object({
-    task: taskRecordSchema,
-    workspace: workspaceRecordSchema,
-    capabilities: z.array(capabilitySchema),
-    requirements: z.array(requirementEvaluationSchema),
-    evidence: z.array(evidenceEvaluationSchema),
-  })
-  .strict();
+export const taskViewSchema = z.strictObject({
+  task: taskRecordSchema,
+  workspace: workspaceRecordSchema,
+  capabilities: z.array(capabilitySchema),
+  requirements: z.array(requirementEvaluationSchema),
+  evidence: z.array(evidenceEvaluationSchema),
+});
 export type TaskView = z.infer<typeof taskViewSchema>;
-export const taskSummarySchema = z
-  .object({
-    id,
-    revision,
-    workspaceRevision: revision,
-    createdAt: utc,
-    updatedAt: utc,
-    runtime: runtimeSchema.nullable(),
-    objective: text,
-    status: z.enum(["active", "paused", "closed"]),
-    closure: closureSchema.nullable(),
-    progress: progressSchema,
-    policy: policySchema.nullable(),
-    requirements: z.array(requirementEvaluationSchema),
-  })
-  .strict();
+export const taskSummarySchema = z.strictObject({
+  id,
+  revision,
+  workspaceRevision: revision,
+  createdAt: utc,
+  updatedAt: utc,
+  runtime: z.nullable(runtimeSchema),
+  objective: text,
+  status: z.enum(["active", "paused", "closed"]),
+  closure: z.nullable(closureSchema),
+  progress: progressSchema,
+  policy: z.nullable(policySchema),
+  requirements: z.array(requirementEvaluationSchema),
+});
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 /** Bounded `inspect` projection (`view: "summary"`): under 4 KB however long the task history is. */
 export type TaskBrief = {
@@ -856,87 +803,87 @@ export type TaskBrief = {
   };
   truncated: boolean;
 };
-export const taskListItemSchema = taskSummarySchema
-  .omit({ policy: true, requirements: true })
-  .extend({ source: provenanceSchema.pick({ host: true, kind: true }) })
-  .strict();
+// Strict like taskSummarySchema: omit and extend keep its catchall.
+export const taskListItemSchema = z.extend(
+  z.omit(taskSummarySchema, { policy: true, requirements: true }),
+  { source: z.pick(provenanceSchema, { host: true, kind: true }) },
+);
 export type TaskListItem = z.infer<typeof taskListItemSchema>;
-export const exportBundleSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    exportedAt: utc,
-    sourceWorkspaceId: id,
-    task: taskRecordSchema,
-    digest,
-  })
-  .strict();
+export const exportBundleSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  exportedAt: utc,
+  sourceWorkspaceId: id,
+  task: taskRecordSchema,
+  digest,
+});
 export type ExportBundle = z.infer<typeof exportBundleSchema>;
 
-export const callerSchema = z.object({ host: hostSchema, actor: text }).strict();
+export const callerSchema = z.strictObject({ host: hostSchema, actor: text });
 export type Caller = z.infer<typeof callerSchema>;
 
 const base = { schemaVersion: z.literal(1) };
 const revisions = {
-  expectedRevision: revision.optional(),
-  expectedWorkspaceRevision: revision.optional(),
+  expectedRevision: z.optional(revision),
+  expectedWorkspaceRevision: z.optional(revision),
 };
 // Omitted revisions default to the current records inside the engine; explicit
 // values are still CAS-enforced. This keeps single-call flows friction-free
 // without weakening concurrent-write protection.
 const taskId = { taskId: id };
-const operation = <T extends z.ZodRawShape>(shape: T) => z.object({ ...base, ...shape }).strict();
+const operation = <T extends z.core.$ZodLooseShape>(shape: T) =>
+  z.strictObject({ ...base, ...shape });
 const taskOperations = {
   start: operation({
     action: z.literal("start"),
-    expectedWorkspaceRevision: revision.nullable().optional(),
+    expectedWorkspaceRevision: z.optional(z.nullable(revision)),
     intent: intentSchema,
   }),
   list: operation({
     action: z.literal("list"),
-    status: z.enum(["open", "closed", "all"]).optional(),
-    query: z.string().trim().min(1).max(200).optional(),
-    limit: z.number().int().min(1).max(50).optional(),
+    status: z.optional(z.enum(["open", "closed", "all"])),
+    query: z.optional(z.string().check(z.trim()).check(z.minLength(1)).check(z.maxLength(200))),
+    limit: z.optional(z.number().check(z.int()).check(z.gte(1)).check(z.lte(50))),
   }),
   inspect: operation({
     action: z.literal("inspect"),
     ...taskId,
-    view: z.enum(["summary", "full"]).optional(),
+    view: z.optional(z.enum(["summary", "full"])),
   }),
   revise: operation({
     action: z.literal("revise"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision.optional(),
+    expectedWorkspaceRevision: z.optional(revision),
     intent: intentSchema,
     reason: text,
   }),
   progress: operation({
     action: z.literal("progress"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     progress: progressSchema,
   }),
   pause: operation({
     action: z.literal("pause"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision.optional(),
+    expectedWorkspaceRevision: z.optional(revision),
     reason: text,
   }),
   resume: operation({
     action: z.literal("resume"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision.optional(),
+    expectedWorkspaceRevision: z.optional(revision),
   }),
   close: operation({
     action: z.literal("close"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision.optional(),
+    expectedWorkspaceRevision: z.optional(revision),
     outcome: outcomeSchema,
     summary: text,
-    decisionIds: z.array(id).optional(),
+    decisionIds: z.optional(z.array(id)),
   }),
 };
 /** Judgment values as sent; core/policy/judgment.ts maps aliases and validates. */
@@ -945,7 +892,7 @@ const policyOperations = {
   assess: operation({
     action: z.literal("assess"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     judgment: rawJudgment,
   }),
   preview: operation({ action: z.literal("preview"), ...taskId, judgment: rawJudgment }),
@@ -955,7 +902,7 @@ const evidenceOperations = {
   record: operation({
     action: z.literal("record"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     evidence: reportedEvidenceSchema,
   }),
 };
@@ -963,17 +910,17 @@ const findingOperations = {
   record: operation({
     action: z.literal("record"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     claim: text,
     consequence: text,
     scope: scopeSchema,
-    candidateId: nullableDigest.optional(),
+    candidateId: z.optional(nullableDigest),
     refs: z.array(refSchema),
   }),
   resolve: operation({
     action: z.literal("resolve"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     findingId: idRef,
     disposition: z.enum(["open", "fixed", "dismissed", "deferred"]),
     reason: text,
@@ -985,12 +932,12 @@ const decisionOperations = {
   record: operation({
     action: z.literal("record"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     purpose: decisionSchema.shape.purpose,
     // The engine binds the decision to the task and workspace it records on.
-    binding: decisionSchema.shape.binding.extend({
-      taskId: id.optional(),
-      workspaceId: id.optional(),
+    binding: z.extend(decisionSchema.shape.binding, {
+      taskId: z.optional(id),
+      workspaceId: z.optional(id),
     }),
     response: decisionSchema.shape.response,
     requirementIds: z.array(digest),
@@ -998,7 +945,7 @@ const decisionOperations = {
   revoke: operation({
     action: z.literal("revoke"),
     ...taskId,
-    expectedRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
     decisionId: id,
     reason: text,
   }),
@@ -1008,14 +955,14 @@ const workerOperations = {
     action: z.literal("assign"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision.optional(),
+    expectedWorkspaceRevision: z.optional(revision),
     assignment: assignmentSchema,
   }),
   report: operation({
     action: z.literal("report"),
     ...taskId,
-    expectedRevision: revision.optional(),
-    expectedWorkspaceRevision: revision.optional(),
+    expectedRevision: z.optional(revision),
+    expectedWorkspaceRevision: z.optional(revision),
     workerId: idRef,
     report: workerReportSchema,
   }),
@@ -1023,7 +970,7 @@ const workerOperations = {
     action: z.literal("cancel"),
     ...taskId,
     ...revisions,
-    expectedWorkspaceRevision: revision.optional(),
+    expectedWorkspaceRevision: z.optional(revision),
     workerId: idRef,
     reason: text,
   }),
@@ -1032,7 +979,7 @@ const stateOperations = {
   export: operation({ action: z.literal("export"), ...taskId }),
   import: operation({
     action: z.literal("import"),
-    expectedWorkspaceRevision: revision.nullable().optional(),
+    expectedWorkspaceRevision: z.optional(z.nullable(revision)),
     bundle: exportBundleSchema,
   }),
 };
@@ -1063,11 +1010,11 @@ export const OPERATION_ACTIONS: Record<OperationFamily, readonly string[]> = {
  * without one applies to the implicit task of the caller's branch (D3); the
  * engine fills it in before parsing against `operationSchemas`.
  */
-const withImplicitTask = (options: Record<string, z.ZodObject>) =>
+const withImplicitTask = (options: Record<string, z.ZodMiniObject>) =>
   Object.values(options).map((option) =>
-    "taskId" in option.shape ? option.extend({ taskId: id.optional() }) : option,
+    "taskId" in option.shape ? z.extend(option, { taskId: z.optional(id) }) : option,
   );
-const advertised = (options: Record<string, z.ZodObject>) =>
+const advertised = (options: Record<string, z.ZodMiniObject>) =>
   z.discriminatedUnion("action", withImplicitTask(options) as any);
 export const advertisedOperationSchemas = {
   task: advertised(taskOperations),

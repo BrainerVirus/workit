@@ -515,7 +515,9 @@ export type ActionKeys = { accepted: Set<string>; required: string[] };
  * defaulted by normalization, so they are accepted but never required.
  */
 export function actionKeys(family: OperationFamily, action: string): ActionKeys | null {
-  const options = (advertisedOperationSchemas[family] as unknown as { options: ZodLike[] }).options;
+  const options = (
+    advertisedOperationSchemas[family] as unknown as { _zod: { def: { options: ZodLike[] } } }
+  )._zod.def.options;
   const option = options.find((item) => {
     const literal = defOf(item).shape?.action as unknown as { _zod: { def: { values: string[] } } };
     return literal._zod.def.values.includes(action);
