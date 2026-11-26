@@ -2733,9 +2733,10 @@ const CHECKED_RESULTS: ReadonlySet<string> = new Set(["verified", "tests-verifie
 function sessionOwnsRun(session: string, row: ReadRow): boolean {
   const colon = session.indexOf(":");
   const agent = row.actor.agentId ?? null;
-  return colon > 0
-    ? row.actor.session === session.slice(0, colon) && agent === session.slice(colon + 1)
-    : row.actor.session === session && agent === null;
+  if (row.actor.session === session && agent === null) return true;
+  return (
+    colon > 0 && row.actor.session === session.slice(0, colon) && agent === session.slice(colon + 1)
+  );
 }
 
 /**
