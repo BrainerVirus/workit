@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - under worktree and scratch confinement, a PowerShell statement (a pwsh -c script or the PowerShell tool) or a cmd /c statement now passes only when its command is a known read; writer cmdlets and aliases, .NET static calls, & and dot-source invocation, script paths, stdin scripts, glued -EncodedCommand forms, xargs -J and find -exec {} count as writes in their run directory
 - under a judge's or an implementer's confinement, a pwsh or powershell -File script (and pwsh x.ps1), an -EncodedCommand (-enc, -e), iex or Invoke-Expression inside a -Command script, a cmd /c link or write target spelled with a %VAR% or !VAR! variable, and an xargs or parallel command whose name stdin fills in (xargs -I{} {} f) count as a write in the directory they run in; pwsh -c Get-ChildItem, cmd /c dir and xargs cat still run (#880).
 
+### Changed
+
+- `workit changelog apply` and `workit pr create --changelog` now move [Unreleased] entries a release tag already shipped into their release sections before adding the new entry, in the same commit; the output says how many moved.
+
 ## [2.25.4] - 2026-11-26
 
 ### Fixed
