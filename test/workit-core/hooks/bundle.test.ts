@@ -169,11 +169,12 @@ const HOOK_ENTRIES = [
 // 577,529 B -> 568,160 B (-9,369 B; Claude Code 570,885 -> 561,516, Codex 559,208 -> 549,839,
 // Cursor 558,602 -> 549,233); the ceiling is core run plus 2 KiB.
 // agent-id-stamp (#883, 2026-11-26, Bun 1.4.5, rebased on #964 at 5f8e4826): the pre-tool agent
+// agent-id-stamp (#883, 2026-11-26, Bun 1.4.5, rebased on #969 at 6f5781ff): the pre-tool agent
 // stamp for each `workit` call (src/agent-stamp.ts, the CLI claims it), its post-tool cleanup, the
 // stamp registry guard and the identity-variable deny (hooks/identity-env.ts) take core run from
-// 567,412 B to 570,618 B (+3,206 B; Claude Code 563,966 B, Codex 552,289 B, Cursor 551,683 B). The
-// ceiling is core run plus 2 KiB.
-const BUDGET = 572_666;
+// 576,814 B to 580,025 B (+3,211 B; Claude Code 573,379 B, Codex 561,702 B, Cursor 561,096 B). The ceiling is core run
+// plus 2 KiB.
+const BUDGET = 582_073;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
