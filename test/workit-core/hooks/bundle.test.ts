@@ -183,12 +183,12 @@ const HOOK_ENTRIES = [
 // beside a workit call, and the claim check refuses a foreign host's variable in a Claude Code shell:
 // core run 573,983 B -> 574,246 B (+263 B; Claude Code 567,603 B, Codex 555,924 B, Cursor 555,318 B).
 // The ceiling is core run plus 2 KiB.
-// hook-entry-guard (#984, 2026-11-26, Bun 1.4.5, on 90c6a7ef): the hook-entry guard (hooks/hook-entry.ts:
-// entries by basename and by resolved path in a Workit package, wrappers, runners, stdin, nested
-// scripts, cd, variables, globs and links), its launcher pre-check and the ledger guard's removal
-// check take core run from 573,983 B to 581,095 B (+7,112 B; Claude Code 574,452 B, Codex
-// 562,773 B, Cursor 562,167 B). The ceiling is core run plus 2 KiB.
-const BUDGET = 583_143;
+// hook-entry-guard (#984, 2026-11-26, Bun 1.4.5, rebased on aa97cd74): the hook-entry guard
+// (hooks/hook-entry.ts: entries by basename and by resolved path in a Workit package, wrappers,
+// runners, stdin, nested scripts, cd, variables, globs and links), its launcher pre-check and the
+// ledger guard's removal check take core run from 574,246 B to 581,358 B (+7,112 B; Claude Code
+// 574,715 B, Codex 563,036 B, Cursor 562,430 B). The ceiling is core run plus 2 KiB.
+const BUDGET = 583_406;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
