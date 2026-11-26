@@ -2722,13 +2722,12 @@ const CHECKED_RESULTS: ReadonlySet<string> = new Set(["verified", "tests-verifie
 
 /**
  * Whose `workit check` rows a verdict session is held to. A host-derived id
- * `S:a` owns the rows stamped session S and agent id a; a plain session S owns
- * its rows with no agent id. Host limit (hosts.md#host-parity): no host stamps
- * WORKIT_AGENT_ID yet, so on Claude Code and Codex a subagent's rows carry the
- * lead's S and no agent id. Until a host stamps one, the `S:a` branch matches
- * nothing (such a verifier is held only through --evidence and the CLI's
- * check_missing/check_failing gates) and a lead's plain S owns every run its
- * subagents made. Never a false refusal: it only narrows who is held.
+ * `S:a` owns the rows stamped session S and agent id a (Claude Code and Codex:
+ * the CLI claims the agent stamp its hook wrote, agent-stamp.ts) and the rows
+ * stamped with the whole `S:a` (an OpenCode or Pi child's own shell); a plain
+ * session S owns its rows with no agent id. A call the hook could not stamp
+ * (hosts.md#host-parity) reads as the lead's: never a false refusal, it only
+ * narrows who is held.
  */
 function sessionOwnsRun(session: string, row: ReadRow): boolean {
   const colon = session.indexOf(":");
