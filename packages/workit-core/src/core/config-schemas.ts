@@ -25,9 +25,8 @@ import {
   modelRoles,
   nonBlank,
   releaseTrackSchema,
-  workspaceConfigSchema,
-  workspacesFileSchema,
 } from "./workspaces";
+import { MODEL_ROLES_DESCRIPTION, describedWorkspacesFileSchema } from "./workspace-descriptions";
 import { described } from "./zod-mini";
 
 export const CONFIG_SCHEMA_FILES = [
@@ -134,7 +133,9 @@ const DEFINITIONS: Record<string, JsonSchema> = {
   tierModel: { anyOf: [nonBlankString, perHost(nonBlankString)] },
 };
 
-const entry = workspaceConfigSchema.shape;
+// The workspaces schemas with their editor descriptions (core/workspace-descriptions.ts).
+const workspacesFileSchema = describedWorkspacesFileSchema();
+const entry = workspacesFileSchema.shape.workspaces._zod.def.innerType._zod.def.element.shape;
 
 /** `models`: the roles (from `modelRoles`), the lead's own model and the override switch. */
 const ROLES_EDITOR = closed(
@@ -146,7 +147,7 @@ const ROLES_EDITOR = closed(
   ),
 );
 const MODELS_EDITOR = closed({
-  roles: { ...ROLES_EDITOR, description: z.globalRegistry.get(modelRoles)?.description },
+  roles: { ...ROLES_EDITOR, description: MODEL_ROLES_DESCRIPTION },
   lead: {
     ...ref("roleModel"),
     description:

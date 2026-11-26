@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import * as z from "./zod-mini";
-import { described } from "./zod-mini";
 import {
   COMMIT_PRESETS,
   PRESETS,
@@ -36,55 +35,28 @@ export const commitPreset = z.custom<CommitFlavorPreset>(
   "unsupported commit preset",
 );
 const workspaceBranchPolicySchema = z.strictObject({
-  preset: described(
-    branchPreset,
-    "The branch model: gitflow, github-flow, trunk-based or custom (allowed/protected set by hand).",
+  preset: branchPreset,
+  developBranch: z.optional(nonBlank),
+  prefixes: z.optional(
+    z.looseObject({
+      feature: nonBlank,
+      bugfix: nonBlank,
+      release: nonBlank,
+      hotfix: nonBlank,
+    }),
   ),
-  developBranch: described(
-    z.optional(nonBlank),
-    "The integration branch gitflow uses (default develop).",
-  ),
-  prefixes: described(
-    z.optional(
-      z.looseObject({
-        feature: nonBlank,
-        bugfix: nonBlank,
-        release: nonBlank,
-        hotfix: nonBlank,
-      }),
-    ),
-    "The branch prefix per kind (feature/, bugfix/, release/, hotfix/).",
-  ),
-  allowed: described(
-    z.optional(z.array(nonBlank)),
-    "Branch name globs a new branch must match (`feature/*`).",
-  ),
-  protected: described(
-    z.optional(z.array(nonBlank)),
-    "Branches nobody commits or pushes to directly.",
-  ),
-  integration: described(
-    z.optional(z.enum(["pr", "merge"])),
-    "How work reaches its base: `pr` (default) opens a PR, `merge` merges locally.",
-  ),
+  allowed: z.optional(z.array(nonBlank)),
+  protected: z.optional(z.array(nonBlank)),
+  integration: z.optional(z.enum(["pr", "merge"])),
 });
 const workspaceCommitPolicySchema = z.strictObject({
-  preset: described(commitPreset, "The commit message flavor, e.g. conventional."),
-  pattern: described(
-    z.optional(z.string()),
-    "A regular expression every commit subject must match.",
-  ),
+  preset: commitPreset,
+  pattern: z.optional(z.string()),
 });
 const workspaceProfileSchema = z
   .strictObject({
-    branchPolicy: described(
-      z.optional(workspaceBranchPolicySchema),
-      "This profile's branch policy.",
-    ),
-    commitPolicy: described(
-      z.optional(workspaceCommitPolicySchema),
-      "This profile's commit policy.",
-    ),
+    branchPolicy: z.optional(workspaceBranchPolicySchema),
+    commitPolicy: z.optional(workspaceCommitPolicySchema),
   })
   .check(
     z.refine(
@@ -107,43 +79,25 @@ const versionSourceSchema = z.discriminatedUnion("kind", [
 // track lists the ones an older reader must not ignore in `critical`.
 export const releaseTrackSchema = z
   .looseObject({
-    strategy: described(z.optional(branchPreset), "The branch model this track follows."),
-    productionBranch: described(nonBlank, "The branch releases land on (main)."),
-    integrationBranch: described(nonBlank, "The branch work integrates into (develop)."),
-    naming: described(
-      z.optional(
-        z.looseObject({
-          feature: z.optional(nonBlank),
-          release: z.optional(nonBlank),
-          hotfix: z.optional(nonBlank),
-        }),
-      ),
-      "Branch name templates per kind, e.g. `feature/{name}`.",
+    strategy: z.optional(branchPreset),
+    productionBranch: nonBlank,
+    integrationBranch: nonBlank,
+    naming: z.optional(
+      z.looseObject({
+        feature: z.optional(nonBlank),
+        release: z.optional(nonBlank),
+        hotfix: z.optional(nonBlank),
+      }),
     ),
-    baseBranch: described(z.optional(nonBlank), "The branch new work starts from."),
-    mergeBackBranches: described(
-      z.optional(z.array(nonBlank)),
-      "Branches a finished release or hotfix is merged back into.",
-    ),
-    pullRequestTarget: described(z.optional(nonBlank), "The branch PRs target."),
-    tagNamespace: described(z.optional(z.string()), "A prefix for this track's release tags."),
-    versionSource: described(
-      z.optional(versionSourceSchema),
-      "Where the version comes from: package-json, git-tag or manual.",
-    ),
-    requiredChecks: described(
-      z.optional(z.array(nonBlank)),
-      "CI checks that must pass before a release.",
-    ),
-    critical: described(
-      z.optional(z.array(nonBlank)),
-      "Fields an older Workit must not ignore: when one is unknown or malformed, Workit fails closed.",
-    ),
+    baseBranch: z.optional(nonBlank),
+    mergeBackBranches: z.optional(z.array(nonBlank)),
+    pullRequestTarget: z.optional(nonBlank),
+    tagNamespace: z.optional(z.string()),
+    versionSource: z.optional(versionSourceSchema),
+    requiredChecks: z.optional(z.array(nonBlank)),
+    critical: z.optional(z.array(nonBlank)),
     // Read leniently (workspaceReleaseNotes).
-    releaseNotes: described(
-      z.optional(z.unknown()),
-      "This track's release notes mode, over the workspace's `releaseNotes`.",
-    ),
+    releaseNotes: z.optional(z.unknown()),
   })
   .check(
     z.superRefine((track, context) => {
@@ -174,254 +128,116 @@ export const releaseTrackSchema = z
     }),
   );
 // Read leniently (core/role-models.ts); one instance so the editor schema can name it.
-export const modelRoles = described(
-  z.optional(z.unknown()),
-  "Per role (decider, implementer, verifier, reviewer, explore, babysit, default for a general-purpose spawn): a model name, `{ model, effort }`, or one of those per host (claude_code, opencode, codex, codex_cli, codex_desktop, cursor, pi, default). The implementer takes one per tier (mundane, standard, hard).",
-);
+export const modelRoles = z.optional(z.unknown());
 export const workspaceConfigSchema = z
   .looseObject({
-    name: described(nonBlank, "The workspace's unique name."),
-    glob: described(
-      nonBlank,
-      "The directories this entry covers, an absolute path glob with * and ** (`/home/you/work/**`); the narrowest match wins.",
+    name: nonBlank,
+    glob: nonBlank,
+    vcs: z.optional(
+      z.looseObject({
+        provider: z.enum(["gitlab", "github"]),
+        defaultTargetBranch: z.optional(nonBlank),
+        tokenFile: z.optional(nonBlank),
+        account: z.optional(nonBlank),
+        // Read leniently (forge/resolve.ts).
+        host: z.optional(z.unknown()),
+      }),
     ),
-    vcs: described(
-      z.optional(
-        z.looseObject({
-          provider: described(z.enum(["gitlab", "github"]), "The forge: github or gitlab."),
-          defaultTargetBranch: described(z.optional(nonBlank), "The branch PRs target by default."),
-          tokenFile: described(
-            z.optional(nonBlank),
-            "A file holding the forge token for this workspace.",
-          ),
-          account: described(
-            z.optional(nonBlank),
-            "The forge login delivery runs as; grants need it to reach the forge.",
-          ),
-          // Read leniently (forge/resolve.ts).
-          host: described(z.optional(z.unknown()), "A self-hosted forge's host name."),
-        }),
-      ),
-      "The forge this workspace's repositories live on.",
-    ),
-    autoApprove: described(
-      z.optional(z.union([z.boolean(), z.array(nonBlank)])),
-      "Legacy (≤4.x) standing approvals, read once as autonomy grants; use `autonomy`.",
-    ),
+    autoApprove: z.optional(z.union([z.boolean(), z.array(nonBlank)])),
     // Read leniently (autonomy.ts endpointOf): an unknown value reads as commit.
-    defaultEndpoint: described(
-      z.optional(z.unknown()),
-      "Where an unnamed request stops: commit (default), pr, green or merged. Set with `workit grant set`, like grants.",
-    ),
-    verification: described(
-      z.optional(z.enum(["proportional", "self", "independent"])),
-      "How a normal-risk behavior change is verified: proportional (default), self or independent. Set with `workit grant set`, like grants.",
-    ),
+    defaultEndpoint: z.optional(z.unknown()),
+    verification: z.optional(z.enum(["proportional", "self", "independent"])),
     // Read leniently (workspaceDelegation): an unknown value reads as unset.
-    delegation: described(
-      z.optional(z.unknown()),
-      "Who does the work: `inline-first` (default) keeps the lead working itself and refuses a slice without a reason to delegate; `lead-orchestrates` allows slices without one.",
-    ),
+    delegation: z.optional(z.unknown()),
     // Read leniently (workspaceChangelog): an unknown value reads as off.
-    changelog: described(
-      z.optional(z.unknown()),
-      "The Keep a Changelog step before a PR opens: `off` (default), `update` (an existing CHANGELOG.md needs an Unreleased entry from a user-facing PR) or `create` (the entry is required, creating the file). `workit pr create` enforces it.",
-    ),
+    changelog: z.optional(z.unknown()),
     // Read leniently like `changelog`.
-    docs: described(
-      z.optional(z.unknown()),
-      "The docs refresh the ship skill does before a PR opens: `off` (default) or `when-user-facing`.",
-    ),
+    docs: z.optional(z.unknown()),
     // Read leniently like `changelog`.
-    changelogPath: described(
-      z.optional(z.unknown()),
-      "Where the changelog lives, repo-relative: one path or glob, or a list (a monorepo with one changelog per package; any of them satisfies the gate). Default CHANGELOG.md at the repo root.",
-    ),
+    changelogPath: z.optional(z.unknown()),
     // Read leniently (workspacePrTemplate): an unknown value reads as auto.
-    prTemplate: described(
-      z.optional(z.unknown()),
-      "Which template a PR description fills: `auto` (default: the repo's GitHub/GitLab template, else Workit's), `repo` (the repo's, refused when it has none), `workit` (Workit's Summary/Evidence/Merge danger) or a repo-relative path to one `.md` file.",
-    ),
+    prTemplate: z.optional(z.unknown()),
     // Read leniently (workspaceReleaseNotes): an unknown value reads as auto.
-    releaseNotes: described(
-      z.optional(z.unknown()),
-      "The release notes `workit release finish` publishes on the forge release: `auto` (default: the draft when there is one, else the notes built from the version's changelog section), `off` (no forge release) or `review` (finish refuses until `workit release notes approve`). A release track overrides it.",
-    ),
-    trailers: described(
-      z.optional(z.boolean()),
-      "Whether commits get the `Workit-Session:` trailer (default true). With false, authorship lives in the ledger only.",
-    ),
-    deleteBranch: described(
-      z.optional(z.boolean()),
-      "Whether `workit pr merge` deletes the head branch after a merge (default true); `--keep-branch` opts out for one merge.",
-    ),
+    releaseNotes: z.optional(z.unknown()),
+    trailers: z.optional(z.boolean()),
+    deleteBranch: z.optional(z.boolean()),
     // Read leniently (workspaceCleanup): an unknown value reads as keep.
-    cleanup: described(
-      z.optional(z.unknown()),
-      "What happens when work finishes: `auto` (default) removes the delivered branch's clean Workit worktree and local branch, switches a clean checkout on it back to the trunk, and stops the processes registered inside them; `keep` removes and stops nothing. A value Workit does not know reads as `keep`.",
-    ),
+    cleanup: z.optional(z.unknown()),
     // Read leniently (workspaceFeedback): an unknown value reads as on.
-    feedback: described(
-      z.optional(z.unknown()),
-      '`workit feedback` for this workspace: `off` hides its contract line and makes the verb refuse; `{ "account": "<login>" }` names the GitHub login it posts with; workspaces inside this one inherit it.',
-    ),
-    liveSessionGuard: described(
-      z.optional(z.boolean()),
-      "Whether the live-session guard denies edits in a checkout another live agent session owns (default true).",
-    ),
-    shared: described(
-      z.optional(z.boolean()),
-      "Whether this workspace's repos are shared with a team that must not see Workit named (default false): `workit pr create` and `workit pr edit` then warn, never block, when the PR title, body or a new doc names it.",
-    ),
+    feedback: z.optional(z.unknown()),
+    liveSessionGuard: z.optional(z.boolean()),
+    shared: z.optional(z.boolean()),
     // tierModels is read leniently (workspaceTierModel), deps and installTimeout
     // too (workspaceFanoutDeps).
-    fanout: described(
-      z.optional(
-        z.looseObject({
-          tierModels: described(
-            z.optional(z.unknown()),
-            "The model per slice TIER (mundane, standard, hard), as one name or per host.",
-          ),
-          deps: described(
-            z.optional(z.unknown()),
-            "How `workit fanout worktree create` gives a slice worktree node_modules: `install` (default: its own frozen install of its lockfile) or `link` (links into the main checkout's installed packages, for a repo too slow to install per slice). `--deps` overrides it.",
-          ),
-          installTimeout: described(
-            z.optional(z.unknown()),
-            "How long the own install may run before its process tree is killed and the worktree is linked instead: a duration such as `90s` or `10m` (default `5m`). `--install-timeout` overrides it.",
-          ),
-        }),
-      ),
-      "Fanout settings.",
+    fanout: z.optional(
+      z.looseObject({
+        tierModels: z.optional(z.unknown()),
+        deps: z.optional(z.unknown()),
+        installTimeout: z.optional(z.unknown()),
+      }),
     ),
     // roles is read leniently (core/role-models.ts).
-    models: described(
-      z.optional(z.looseObject({ roles: modelRoles })),
-      "Model and effort per role and host (roles), the lead's own advisory model (lead), how a role model applies (enforce: advise, the default, or strict) and, under strict, whether a model the lead names on a spawn wins (allowLeadOverride, default false); the same key at the top of workspaces.json is the global default.",
-    ),
+    models: z.optional(z.looseObject({ roles: modelRoles })),
     // Read leniently (core/resources.ts): an unknown or malformed field warns.
-    resources: described(
-      z.optional(z.unknown()),
-      "Heavy-check limits on this machine: slots, scope, heavy, light, memoryMax, cpuQuota, wait.",
-    ),
-    remotes: described(
-      z.optional(
-        z.array(
-          nonBlank.check(
-            z.refine(
-              (pattern) => remotePattern(pattern) !== null,
-              "is not a remote URL (https://host/owner/repo, git@host:owner/repo, a path, or owner/*)",
-            ),
+    resources: z.optional(z.unknown()),
+    remotes: z.optional(
+      z.array(
+        nonBlank.check(
+          z.refine(
+            (pattern) => remotePattern(pattern) !== null,
+            "is not a remote URL (https://host/owner/repo, git@host:owner/repo, a path, or owner/*)",
           ),
         ),
       ),
-      "Remote URLs this entry owns: a checkout pushing to or opening PRs on one never exceeds this entry's grants, wherever the folder is (`owner/*` claims a whole owner). Only the user changes it, in their own terminal.",
     ),
-    externalRepos: described(
-      z.optional(
-        z.array(
-          nonBlank.check(
-            z.regex(
-              /^[\w-]+(?:\/\w[\w.-]*)*\/(?:\w[\w.-]*|\*)$/u,
-              "is owner/name, group/project or owner/* on the checkout's forge host, without the host",
-            ),
+    externalRepos: z.optional(
+      z.array(
+        nonBlank.check(
+          z.regex(
+            /^[\w-]+(?:\/\w[\w.-]*)*\/(?:\w[\w.-]*|\*)$/u,
+            "is owner/name, group/project or owner/* on the checkout's forge host, without the host",
           ),
         ),
       ),
-      "Repositories outside this workspace's own forge owners that `workit issue create|comment|close --repo` may write to: `owner/name`, or `owner/*` for a whole owner. Only the user changes it, in their own terminal.",
     ),
-    additiveRiskPaths: described(
-      z.optional(z.array(nonBlank)),
-      "Risk-path globs whose purely additive edits follow the review lane of the rest of the diff. Only the user sets it; it counts only while sealed.",
-    ),
-    autonomy: described(
-      z.optional(
-        z.looseObject(
-          Object.fromEntries(
-            ["push", "pr", "merge", "release", "rerun"].map((kind) => [
-              kind,
-              described(
-                z.optional(z.union([z.boolean(), z.literal("verified")])),
-                `The ${kind} grant: true, false, or "verified" (only after a verdict).`,
-              ),
-            ]),
-          ),
+    additiveRiskPaths: z.optional(z.array(nonBlank)),
+    autonomy: z.optional(
+      z.looseObject(
+        Object.fromEntries(
+          ["push", "pr", "merge", "release", "rerun"].map((kind) => [
+            kind,
+            z.optional(z.union([z.boolean(), z.literal("verified")])),
+          ]),
         ),
       ),
-      "Autonomy grants (D15): only ever set here, by the user, with `workit grant set`.",
     ),
-    youtrack: described(
-      z.optional(
-        z.looseObject({
-          baseUrl: described(z.optional(nonBlank), "This workspace's YouTrack URL."),
-          link_issues: described(
-            z.optional(z.boolean()),
-            "Legacy alias of `issues: { provider: youtrack, link: true }`.",
-          ),
-          writes: described(
-            z.optional(z.enum(["ask", "auto"])),
-            "ask (default): each workit youtrack write waits for the user's yes. auto: posts without asking, behind WORKIT_YT_WRITE=1.",
-          ),
-          autoHosts: described(
-            z.optional(z.array(nonBlank)),
-            "With writes auto: the only YouTrack hosts (`acme.youtrack.cloud`) a write may reach without asking. A raw ytrack write must name one with --host; a write elsewhere asks. Only the user widens it, in their own terminal (`workit workspace seal`).",
-          ),
-        }),
-      ),
-      "YouTrack settings for this workspace.",
+    youtrack: z.optional(
+      z.looseObject({
+        baseUrl: z.optional(nonBlank),
+        link_issues: z.optional(z.boolean()),
+        writes: z.optional(z.enum(["ask", "auto"])),
+        autoHosts: z.optional(z.array(nonBlank)),
+      }),
     ),
     // relation, repo and host are read leniently (vcs-config.ts issueTrackerOf, D17).
-    issues: described(
-      z.optional(
-        z.looseObject({
-          provider: described(
-            z.optional(z.enum(["github", "gitlab", "youtrack"])),
-            "The issue tracker PRs link to.",
-          ),
-          link: described(z.optional(z.boolean()), "Derive the issue from the branch name."),
-          relation: described(
-            z.optional(z.unknown()),
-            "How a PR names its issue: `closes` (default) or `refs`.",
-          ),
-          backlink: described(
-            z.optional(z.boolean()),
-            "Post the PR URL on each linked issue after the PR is opened.",
-          ),
-          link_on_pr: described(z.optional(z.boolean()), "Legacy alias of `link`."),
-          repo: described(
-            z.optional(z.unknown()),
-            "The GitHub/GitLab repository (owner/name) that holds the issues; default the PR's own.",
-          ),
-          host: described(
-            z.optional(z.unknown()),
-            "That repository's host; default the PR's host, or the tracker's public one.",
-          ),
-        }),
-      ),
-      "The issue tracker PRs link to (any forge with any tracker).",
+    issues: z.optional(
+      z.looseObject({
+        provider: z.optional(z.enum(["github", "gitlab", "youtrack"])),
+        link: z.optional(z.boolean()),
+        relation: z.optional(z.unknown()),
+        backlink: z.optional(z.boolean()),
+        link_on_pr: z.optional(z.boolean()),
+        repo: z.optional(z.unknown()),
+        host: z.optional(z.unknown()),
+      }),
     ),
-    branchPolicy: described(
-      z.optional(workspaceBranchPolicySchema),
-      "Which branches may be created and which are protected.",
-    ),
-    commitPolicy: described(z.optional(workspaceCommitPolicySchema), "The commit message rules."),
-    defaultProfile: described(
-      z.optional(nonBlank),
-      "The profile used when none is named; must be a key of `profiles`.",
-    ),
-    profiles: described(
-      z.optional(z.record(nonBlank, workspaceProfileSchema)),
-      "Named branch/commit policy variants of this workspace.",
-    ),
-    releaseTracks: described(
-      z.optional(z.record(nonBlank, releaseTrackSchema)),
-      "Named release tracks: production and integration branches, naming and versioning.",
-    ),
+    branchPolicy: z.optional(workspaceBranchPolicySchema),
+    commitPolicy: z.optional(workspaceCommitPolicySchema),
+    defaultProfile: z.optional(nonBlank),
+    profiles: z.optional(z.record(nonBlank, workspaceProfileSchema)),
+    releaseTracks: z.optional(z.record(nonBlank, releaseTrackSchema)),
     // Read leniently (core/release-packages.ts): a bad entry is reported and ignored.
-    releasePackages: described(
-      z.optional(z.unknown()),
-      "Packages released from this repository's own release line under their own tag namespace (`pkg-a@0.1.0`): keyed by package name, each `{ tagNamespace?, changelogPath? }` (default namespace `<name>@`). `workit release package <name> <version>` tags and publishes one.",
-    ),
+    releasePackages: z.optional(z.unknown()),
   })
   .check(
     z.superRefine((workspace, context) => {
@@ -439,24 +255,12 @@ export const workspaceConfigSchema = z
   );
 export const workspacesFileSchema = z
   .looseObject({
-    workspaces: described(
-      z.optional(z.array(workspaceConfigSchema)),
-      "Workspace entries, each mapping a path glob to its forge, policies and grants.",
-    ),
-    models: described(
-      z.optional(z.looseObject({ roles: modelRoles })),
-      "The global default model and effort per role and host (roles), the lead's own advisory model (lead), how a role model applies (enforce: advise, the default, or strict) and, under strict, whether a model the lead names on a spawn wins (allowLeadOverride, default false).",
-    ),
-    feedback: described(
-      z.optional(
-        z.looseObject({
-          account: described(
-            z.optional(nonBlank),
-            "The GitHub login `workit feedback --post` uses when no workspace names one; never the workspace's work account by default.",
-          ),
-        }),
-      ),
-      "`workit feedback` defaults for every workspace.",
+    workspaces: z.optional(z.array(workspaceConfigSchema)),
+    models: z.optional(z.looseObject({ roles: modelRoles })),
+    feedback: z.optional(
+      z.looseObject({
+        account: z.optional(nonBlank),
+      }),
     ),
   })
   .check(
