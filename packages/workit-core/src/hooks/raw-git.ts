@@ -834,7 +834,7 @@ export function workitInvocations(
 ): string[][] {
   const found: string[][] = [];
   for (const { words } of segmentsOf(command, dialect)) {
-    const at = words.findIndex((word) => !/^\w+=/.test(word) && !LAUNCHERS.has(word));
+    const at = words.findIndex((word) => !/^\w+\+?=/.test(word) && !LAUNCHERS.has(word));
     if (at < 0) continue;
     if (WORKIT_BIN.test(words[at])) {
       found.push(words.slice(at + 1));

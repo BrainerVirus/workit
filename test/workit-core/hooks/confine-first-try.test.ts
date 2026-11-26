@@ -245,12 +245,9 @@ test("Given a verifier, When it runs git remote get-url, range-diff or worktree 
   ]);
 });
 
-// #880 stays open (decider, review mwmaow76): the read-only one-liners it lists keep their base
-// verdict, denied, and the inline-script reading is unchanged; only `node --print` and
-// `python -m <module>` are judged now. Two forms are still allowed as on base, tracked by #880:
-// `os.sys\<newline>tem(…)` in an unquoted heredoc and a pandas writer reached through an alias.
-test("Given the one-liners #880 lists and writes hidden in inline code, When a judge runs them, Then each is denied as on base; a heredoc that only reads still runs", () => {
-  denied(verifier, [
+// #880: the read-only one-liners it lists run; the writes hidden in inline code stay denied.
+test("Given the one-liners #880 lists and writes hidden in inline code, When a judge runs them, Then each one-liner runs and each write is denied; a heredoc that only reads still runs", () => {
+  allowed(verifier, [
     `python3 -c "x=1; print(f'x={x}')"`,
     "python3 - <<'EOF'\n# the candidate's version\nimport json\nprint(json.load(open('package.json'))['version'])\nEOF",
     "node -e 'const p = require(\"./package.json\"); console.log(`${p.name}@${p.version}`)'",
@@ -258,6 +255,9 @@ test("Given the one-liners #880 lists and writes hidden in inline code, When a j
     `python3 -c "from pathlib import Path; p = 'package.json'; print(Path(p).read_text().replace('a','b'))"`,
     `python3 -c "print((5).to_bytes(2,'big'))"`,
     `node -e "console.log(new Map().delete(1))"`,
+    "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
+  ]);
+  denied(verifier, [
     `python3 -c "print(f'{open(p, m)}')"`,
     'node -e \'console.log(`${require("fs").rmSync("x")}`)\'',
     `python3 -c "print('\`'); open('x','w'); print('\`')"`,
@@ -267,9 +267,6 @@ test("Given the one-liners #880 lists and writes hidden in inline code, When a j
     `node --print "require('fs').writeFileSync('x','y')"`,
     "python3 -m pip install --target /tmp/x foo",
     `export NODE_OPTIONS=--require=/tmp/e.js; node -e "1"`,
-  ]);
-  allowed(verifier, [
-    "node - <<'EOF'\n// prints the version\nconsole.log(require('./package.json').version)\nEOF",
   ]);
 });
 

@@ -519,12 +519,12 @@ const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php)$/;
 const FED = /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$|^<\(/;
 /** Words before the command they run (`env -i`, `sudo -u me`, `builtin`, `then`). */
 const LEADS =
-  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|timeout|stdbuf|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+=.*|[-\d].*)$/s;
+  /^(?:sudo|doas|env|command|builtin|exec|nohup|time|nice|timeout|stdbuf|xargs|busybox|!|\{|if|then|else|elif|do|while|until|\w+\+?=.*|[-\d].*)$/s;
 /** Commands a judge's refusal reads (a lead's option value is never one of them). */
 const RUNS =
   /^(?:sh|bash|zsh|dash|ksh|mksh|ash|python[\d.]*|node|bun|deno|ruby|perl|php|eval|source|\.|workit)$/;
 /** Interpreter options that run an inline script, a module, or nothing (help, version, `--test`). */
-const INLINE = /^-[a-zA-Z]*[ceEpm]$|^--(?:eval|print|test|version|help)$|^-[hvV]$/;
+const INLINE = /^-[a-zA-Z]*[ceEpm]$|^--(?:eval|print)(?:=|$)|^--(?:test|version|help)$|^-[hvV]$/;
 /** Interpreter options that take the next word. */
 const VALUED = /^-[WXIrC]$|^--(?:require|import|loader|conditions|input-type)$/;
 
@@ -1051,7 +1051,7 @@ const judgeRefusal = (command: string, fed: string[], depth = 0): string | null 
     // An environment that makes a later interpreter load code (`export NODE_OPTIONS=-r x`), or a
     // name the shell sets itself, so its value is not the one written (`REPLY=x; read; … $REPLY`).
     const set = words.find((word) =>
-      /^(?:NODE_OPTIONS|PYTHON(?:STARTUP|PATH|HOME)|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|LD_\w+|DYLD_\w+|REPLY|OPTARG|OPTIND|MAPFILE|READLINE_\w+|S?RANDOM|SECONDS|LINENO|E?UID|PPID|OLDPWD|_|HOSTNAME|HISTCMD|EPOCH\w*)=/.test(
+      /^(?:NODE_OPTIONS|PYTHON(?:STARTUP|PATH|HOME)|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|LD_\w+|DYLD_\w+|REPLY|OPTARG|OPTIND|MAPFILE|READLINE_\w+|S?RANDOM|SECONDS|LINENO|E?UID|PPID|OLDPWD|_|HOSTNAME|HISTCMD|EPOCH\w*)\+?=/.test(
         word,
       ),
     );

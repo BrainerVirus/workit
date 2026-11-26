@@ -288,10 +288,10 @@ test("Given a judge or an implementer, When review round 1's bypasses run (verdi
     `node -e "require('vm').runInThisContext('1')"`,
     `python3 -c "import os; os.posix_spawn('/bin/true', ['x'], {})"`,
     `node -e "const fs=require('fs'); const s=fs.readFileSync('package.json','utf8').replace(/'/g,''); fs.writeFileSync('package.json',s)"`,
-    `node -e "console.log(\`\${process.exit()}\`)"`,
+    `node -e "console.log(\`\${require('fs').rmSync('x')}\`)"`,
     `node -e "console.log('\\x41')"`,
-    `python3 -c "print(f'{1}')"`,
-    `python3 -c "print(rf'{1}')"`,
+    `python3 -c "print(f'{open(\\"x\\", \\"w\\")}')"`,
+    `python3 -c "print(rf'{ {1: 2}[1] }')"`,
     `python3 -c "import io; io.FileIO('x', 'w')"`,
     `python3 -c "from pathlib import Path; Path('a').replace('b')"`,
     `python3 -c "import zipfile; zipfile.ZipFile('x.zip', 'w')"`,
@@ -326,4 +326,72 @@ test("Given a judge or an implementer, When review round 1's bypasses run (verdi
   expect(refused?.permissionDecision).toBe("deny");
   expect(refused?.permissionDecisionReason).toContain("workit finding record");
   expect(refused?.permissionDecisionReason).not.toContain("ledger finding");
+});
+
+// #880: read-only one-liners the fail-closed rules still refused, and the escapes around them.
+test("Given a verifier or an implementer, When an inline script only reads through an f-string, a template literal, a comment, a division, a string's .replace, .to_bytes or a Map's .delete, Then the hook allows it", () => {
+  const reads = [
+    `python3 -c "x=1; print(f'x={x}')"`,
+    `python3 -c "import json; d=json.load(open('package.json')); print(f\\"{d['name']}@{d['version']}\\")"`,
+    "python3 - <<'EOF'\nimport json\n# the candidate's version\nprint(json.load(open('package.json'))['version'])\nEOF",
+    "node -e 'const p=require(\"./package.json\"); console.log(`${p.name}@${p.version}`)'",
+    "node - <<'EOF'\n// the candidate's version\n/* it's read-only */\nconsole.log(require('./package.json').version)\nEOF",
+    `python3 -c "a=[1,2]; print(len(a) / 2, 'half')"`,
+    `node -e "console.log(4 / 2, 'x')"`,
+    `python3 -c "from pathlib import Path; p='package.json'; print(Path(p).read_text().replace('a','b'))"`,
+    `python3 -c "print((5).to_bytes(2,'big'))"`,
+    `node -e "console.log(new Map().delete(1))"`,
+    `node --print="require('./package.json').name"`,
+  ].filter((command) => process.platform !== "win32" || !command.includes("\\"));
+  allowed(verifier, reads);
+  allowed(
+    implementer,
+    reads.map((command) => `cd ${lead} && ${command}`),
+  );
+});
+
+test("Given a verifier or an implementer, When an inline script hides a write in an f-string, a template literal, a comment, a regex literal, a reflective call, a joined line, an option or a loader, Then it is denied", () => {
+  const writers = [
+    `python3 -c "print(f'{open(\\"x\\",\\"w\\").write(\\"a\\")}')"`,
+    'node -e \'console.log(`${require("fs").writeFileSync("x","a")}`)\'',
+    // A template literal spans lines, so a quote in it pairs with nothing.
+    'node - <<\'EOF\'\nconst a = `\n\'`; require("fs").writeFileSync("x","a"); const b = `\'\n`\nEOF',
+    // In Node a `#` line is code (a private field), and a comment's backtick opens nothing.
+    'node - <<\'EOF\'\nclass A{\n#a = `\n`; static{ require("fs").writeFileSync("x","a") } #b = `\n#`}\nEOF',
+    "node - <<'EOF'\n// `\nrequire('fs').writeFileSync('x','a')\n// `\nEOF",
+    // A triple-quoted string fails closed.
+    'python3 - <<\'EOF\'\ns = """"\n"""; open("x","w").write("a"); t = """\n""" #"\nEOF',
+    // A regex literal holding a quote or a backtick, wherever one may start.
+    `node -e "!/'/.test(''); require('fs').writeFileSync('x','a'); !/'/.test('')"`,
+    `node -e "if (1) /'/.test(''), require('fs').writeFileSync('x','a'); if (1) /'/"`,
+    `node -e "function f(){ return /'/.test('') && require('fs').writeFileSync('x','a') || /'/ }; f()"`,
+    'node - <<\'EOF\'\nconst r = /`/;\nrequire("fs").writeFileSync("x","a");\nconst q = /`/;\nEOF',
+    "node -e \"const r = /[/*]/; const t = `*/`; require('fs').writeFileSync('x','a'); /* ` */\"",
+    // A read's literal cannot reach past a string.
+    `node -e "const t = 'open(' + process.getBuiltinModule(/fs/.source).writeFileSync(/x/.source, /a/.source) + ')'"`,
+    `python3 -c "from pathlib import Path; p = Path('a'); p.replace('b,c')"`,
+    `node -e "Reflect.get(require('fs'), 'write'+'FileSync')('x','a')"`,
+    `node -e "Object.getOwnPropertyDescriptor(require('fs'), 'write'+'FileSync').value('x','a')"`,
+    `python3 -c "import operator, os; operator.methodcaller('sys'+'tem', 'id')(os)"`,
+    `python3 -c "import operator, os; operator.attrgetter('sys'+'tem')(os)('id')"`,
+    // An unquoted heredoc joins a backslash-newline before python3 reads it.
+    "python3 - <<EOF\nimport os; os.sys\\\ntem('id')\nEOF",
+    `node --print="require('fs').writeFileSync('x','a')"`,
+    `node --eval="require('fs').writeFileSync('x','a')"`,
+    "python3 -mpip install --target src x",
+    "python3 -Im pip install --target src x",
+    "export NODE_OPTIONS='--require ./evil.js'; node -e 1",
+    "NODE_OPTIONS+=' -r ./evil.js' node -e 1",
+    "node --env-file=.env -e 1",
+    // `NAME+=value` before a command is an assignment, not the command.
+    "A+=1 rm -rf src",
+  ];
+  const posix = (list: string[]) =>
+    process.platform === "win32" ? list.filter((command) => !command.includes("\\")) : list;
+  denied(verifier, posix(writers), "workit scratch confinement: verifier ver-reads");
+  denied(
+    implementer,
+    posix(writers).map((command) => `cd ${lead} && ${command}`),
+    "workit worktree confinement: implementer impl-reads",
+  );
 });

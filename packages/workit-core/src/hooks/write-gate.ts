@@ -134,7 +134,8 @@ const SCRIPT_SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
  */
 const wrappedScript = (input: string[]): string | null => {
   let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) words = words.slice(1);
+  while (words.length && (PREFIXES.has(words[0]) || /^\w+\+?=/.test(words[0])))
+    words = words.slice(1);
   const tail = workitCheckTail(words);
   if (!tail) return null;
   if ("script" in tail) return tail.script;
@@ -147,7 +148,8 @@ const wrappedScript = (input: string[]): string | null => {
 /** The files one simple command edits: [] none, null unknown. */
 const editsOf = (input: string[]): string[] | null => {
   let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) words = words.slice(1);
+  while (words.length && (PREFIXES.has(words[0]) || /^\w+\+?=/.test(words[0])))
+    words = words.slice(1);
   const [verb, ...args] = words;
   const name = (verb?.split(/[\\/]/).at(-1) ?? "").toLowerCase();
   if (!name || name === "workit" || (name === "npx" && args.some((item) => /workit/.test(item))))
@@ -240,6 +242,8 @@ const WRAPPERS: Record<string, string> = {
 };
 
 const INTERPRETERS = /^(?:python[\d.]*|node|bun|deno|ruby|perl|php|tsx|ts-node)$/;
+/** An interpreter option that runs inline code: `-c`, `-e`, `-p`, `--eval[=<code>]`, `--print[=<code>]`. */
+const INLINE_CODE = /^-[a-zA-Z]*[cep]$|^--(?:eval|print)(?:=|$)/;
 
 /** Whether `file` is a config dir itself. */
 const isConfigDir = (file: string): boolean =>
@@ -259,32 +263,71 @@ const READ_CALLS =
 const MUTATING_CALLS =
   /^(?:renames?(?:Sync)?|move|copy(?:2|file|tree|File)?(?:Sync)?|cp(?:Sync)?|rm(?:tree|dir|Sync|dirSync)?|unlink(?:Sync)?|remove(?:dirs)?|mkdirs?(?:Sync)?|makedirs|mkdtemp(?:Sync)?|(?:sym|hard)?link(?:Sync|_to)?|write\w*|append\w*|truncate(?:Sync)?|ch(?:mod|own)(?:Sync)?|touch|open(?:Sync)?|dump|save|extractall|unpack_archive|put_contents|mv|FileUtils)$/;
 /**
- * Inline code that runs a command, deletes, loads code by path, reaches a
- * call by a computed name or opens a file by other than a plain path and read
- * mode (FREE_OPEN): a word anywhere in it, string literals included. A
- * `require` of anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
+ * Inline code that runs a command, deletes (a file's `.delete()`), writes a
+ * table (`.to_csv(path)`), loads code by path or reaches a call by a computed
+ * name: a word anywhere in it, string literals included. A `require` of
+ * anything but a package name (never a drive letter, `C:/…`) or JSON loads code.
  */
 const SPAWNS =
-  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.(?:delete|to_\w+)\s*\(|Path\b.*\.replace\(|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*=|-r\b|--(?:require|import|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
-/** `open(<literal path or name>[, <read mode>][, encoding=…])`: a read. */
-const FREE_OPEN =
-  /\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\1)[^'"]*\1|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\2|encoding\s*=\s*(['"])[\w-]+\3)\s*)*\)/g;
+  /subprocess|child_process|WriteStream|tempfile|sqlite|inplace|getattr|attrgetter|methodcaller|Reflect|getOwnPropertyDescriptor|spawn|\bvm\b|Function\s*\(|FileIO|ZipFile|tarfile|shelve|FileHandler|filename\s*=|savefig|utime|ch(?:mod|own)|mkfifo|mknod|\.delete\s*\(\s*\)|\.to_(?!bytes|dict|list)\w+\s*\((?!\s*\))|Bun\.\$|O_(?:WR|RDW|CR|AP|TR)|(?:PYTHON|NODE_)\w*\+?=|-r\b|--(?:require|import|env-file|[\w-]*loader)|\bos\.replace|\b(?:system|popen|exec\w*|fork|eval|shutil|(?:unlink|rename|remove)\w*)\b|\]\s*\(|\brequire\s*\(\s*(?!(['"])(?:(?![a-zA-Z]:)[\w@][^'"]*|[^'"]*\.json)\1)/;
+/**
+ * Inline code's tokens, left to right: a whole-line comment (`#`, `//`, or a
+ * block comment that starts a line), a read (`open(<literal path or name>[,
+ * <read mode>][, encoding=…])`, printing to stdout or stderr), a
+ * triple-quoted string, a template literal, an f-string, a string literal, or
+ * a regex literal where one may start: not after a name, a number, `.`, `]`
+ * or a quote (`len(a) / 2` divides) unless the name is `return`, `typeof`… A
+ * block comment that starts mid-line is not read as one, so a quote in it is
+ * left over.
+ */
+const TOKENS =
+  /^[ \t]*(#.*|\/\/.*|\/\*[\s\S]*?\*\/)|\bopen\w*\s*\(\s*(?:(['"])(?![rbtUwax+]*\2)[^'"\\\n]*\2|[\w.]+)?\s*(?:,\s*(?:(['"])[rbt]*\3|encoding\s*=\s*(['"])[\w-]+\4)\s*)*\)|std(?:out|err)\.write|([rRbBuUfF]{0,2})('''|""")(?:\\[\s\S]|(?!\6)[\s\S])*?\6|`((?:\\[\s\S]|\$\{[^{}`]*\}|[^\\`$]|\$(?!\{))*)`|[rR]?[fF][rR]?(['"])((?:\\.|\{[^{}\n]*\}|(?!\8)[^\\\n{}])*)\8|(?<![fF][rR]?)(['"])(?:\\.|(?!\10)[^\\\n])*\10|(?<=(?:^|[^\w$.\]'"`\s]|\b(?:return|typeof|void|delete|case|in|yield|await|else|do))\s*)\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\//gm;
 
 /**
- * Whether inline Python or Node code may change files: SPAWNS, or a word
- * outside FREE_OPEN and string literals that names a call in MUTATING_CALLS
- * (bar a list's `append` and `copy`, and printing to stdout or stderr).
+ * Inline code as `writesIn` reads it: reads and string literals dropped, a
+ * template literal or an f-string replaced by the code in its braces, a
+ * comment's quotes dropped (a `#` line is a comment only in Python: in Node
+ * it may be a private field), and a triple-quoted f-string and a regex
+ * literal kept, so their quotes are left over.
  */
-const writesIn = (text: string): boolean => {
-  const bare = text
-    .replace(FREE_OPEN, "")
-    .replace(/std(?:out|err)\.write|(?<![fF][rR]?)(['"])(?:\\.|(?!\1)[^\\\n])*\1/g, "");
-  // Fail closed where the strings cannot be told apart: a quote left over (an f-string, a
-  // regex literal), `${…}`, a `\u` or `\x` escape, or a regex literal holding a quote.
+const strip = (text: string, python: boolean): string =>
+  text.replace(
+    TOKENS,
+    (
+      token: string,
+      comment?: string,
+      _path?: string,
+      _mode?: string,
+      _encoding?: string,
+      prefix?: string,
+      triple?: string,
+      template?: string,
+      _quote?: string,
+      fstring?: string,
+      string?: string,
+    ) => {
+      const code = template ?? fstring;
+      if (comment) return python || comment[0] !== "#" ? token.replace(/['"`]/g, "") : token;
+      if (code !== undefined)
+        return `\n${strip(code.match(/\{[^{}]*\}/g)?.join("\n") ?? "", python)}\n`;
+      return string || (triple && !/f/i.test(prefix ?? "")) || /^[os]/.test(token) ? "" : token;
+    },
+  );
+
+/**
+ * Whether inline Python or Node code may change files: SPAWNS, a one-argument
+ * `.replace(` (a path's rename: a string's takes two), or a word left by
+ * `strip` that names a call in MUTATING_CALLS (bar a list's `append` and `copy`).
+ */
+const writesIn = (text: string, python = false): boolean => {
+  const bare = strip(text, python);
+  // Fail closed where the strings cannot be told apart: a quote or backtick left over (an
+  // f-string or template literal with nested braces, a regex literal holding one) or a `\u`
+  // or `\x` escape.
   return (
     SPAWNS.test(text) ||
-    /['"]/.test(bare) ||
-    /\$\{|\\[ux]|(?:^|[(,=:;!&|?{}[\s])\/(?![/*])[^/\n]*['"]/.test(text) ||
+    /['"`]|\.replace\s*\((?![^()]*,)/.test(bare) ||
+    /\\[ux]/.test(text) ||
     [...bare.matchAll(/[\w$]+/g)].some(
       ([word]) => !/^(?:append|copy)$/.test(word) && MUTATING_CALLS.test(word),
     )
@@ -377,7 +420,7 @@ const unwrapped = (words: readonly string[]): string[] | null => {
     (takes = WRAPPERS[words[at]?.split(/[\\/]/).at(-1) ?? ""]) !== undefined;
   ) {
     at++;
-    while (at < words.length && /^-|^\w+=|^\d[\w.]*$/.test(words[at]))
+    while (at < words.length && /^-|^\w+\+?=|^\d[\w.]*$/.test(words[at]))
       at += words[at].length === 2 && words[at][0] === "-" && takes.includes(words[at][1]) ? 2 : 1;
   }
   return at ? words.slice(at) : null;
@@ -422,9 +465,10 @@ const opaqueWrites = (
   input: readonly string[],
   scriptOf: (index: number) => string | undefined = (index) => input[index],
   fed?: string | null,
+  loads = false,
 ): string[] | null => {
   let words = input;
-  while (words.length && (PREFIXES.has(words[0]) || /^\w+=/.test(words[0]))) {
+  while (words.length && (PREFIXES.has(words[0]) || /^\w+\+?=/.test(words[0]))) {
     if (words[0] === "xargs") {
       let at = 1;
       while (words[at]?.startsWith("-")) at += XARGS_VALUE.test(words[at]) ? 2 : 1;
@@ -488,15 +532,23 @@ const opaqueWrites = (
     // The script, the interpreter's options and arguments, and the environment
     // it is given (`X=/p node -e …`, `NODE_OPTIONS=--require …`).
     const texts = input.map((word, index) =>
-      index === runs || (index < runs && !/^\w+=/.test(word)) ? "" : scriptOf(index),
+      index === runs || (index < runs && !/^\w+\+?=/.test(word)) ? "" : scriptOf(index),
     );
-    // Python or Node code with no call that writes, deletes or runs a command changes nothing.
-    return /^(?:python[\d.]*|node|bun)$/.test(name) &&
-      // The code, the environment and the options before it (`-r`, `--import` load code).
+    // Python or Node code with no call that writes, deletes or runs a command changes nothing,
+    // unless the command sets a loader (`export NODE_OPTIONS=…` before it).
+    return !loads &&
+      /^(?:python[\d.]*|node|bun)$/.test(name) &&
+      // The code (`--eval=<code>` holds it), the environment and the options before it.
       [
-        at < 0 ? fed : texts[runs + at + 2],
+        at < 0
+          ? fed
+          : args[at].includes("=")
+            ? texts[runs + at + 1]?.replace(/^[^=]*=/, "")
+            : texts[runs + at + 2],
         ...texts.slice(0, runs + 1 + (at < 0 ? args.length : at)),
-      ].every((text) => text !== undefined && text !== null && !writesIn(text))
+      ].every(
+        (text) => text !== undefined && text !== null && !writesIn(text, name.startsWith("py")),
+      )
       ? null
       : [
           ".",
@@ -508,14 +560,16 @@ const opaqueWrites = (
   };
   if (name === "curl") return curlOutputs(args);
   if (name === "perl") return inline(/^-[a-zA-Z]*[eE]$/);
-  // A module (`python3 -m pip install --target …`) runs code Workit does not read.
+  // A module (`python3 -m pip install --target …`, `-mpip`, `-Im pip`) runs code Workit does not read.
   if (
     name.startsWith("python") &&
-    args.some((arg, at) => arg === "-m" && args[at + 1] !== "json.tool")
+    args.some(
+      (arg, at) =>
+        /^-[^-m]*m/.test(arg) && (arg.replace(/^-[^-m]*m/, "") || args[at + 1]) !== "json.tool",
+    )
   )
     return [".", ...args.flatMap(pathsIn)];
-  if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name))
-    return inline(/^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/);
+  if (/^(?:python[\d.]*|node|bun|deno|ruby|php)$/.test(name)) return inline(INLINE_CODE);
   return shellScript(words) === null ? null : ["."];
 };
 
@@ -1128,7 +1182,7 @@ const DECLARERS = new Set(["export", "declare", "typeset", "local", "readonly"])
 
 /** The `NAME=value` assignments a segment makes to the shell itself (alone, or after `export`). */
 const assignmentsOf = (words: readonly string[]): Array<[string, string]> => {
-  const first = words.findIndex((word) => !/^\w+=/.test(word));
+  const first = words.findIndex((word) => !/^\w+\+?=/.test(word));
   const named =
     first < 0
       ? words
@@ -1238,7 +1292,7 @@ const untrustedVars = (
     }
     const words = segment.words.slice(start);
     // A changed IFS splits every expansion where it likes, except in a `read` it prefixes.
-    const at = words.findIndex((word) => !/^\w+=/.test(word));
+    const at = words.findIndex((word) => !/^\w+\+?=/.test(word));
     const ifs = (word: string) => /\bIFS\b/.test(word);
     if (
       segment.subs?.some(ifs) ||
@@ -1536,7 +1590,7 @@ const segmentTargets = (
       else loops.delete(name);
       continue;
     }
-    const lead = body.findIndex((word) => !/^\w+=/.test(word));
+    const lead = body.findIndex((word) => !/^\w+\+?=/.test(word));
     const words = lead < 0 ? [] : body.slice(lead);
     if (!segment.conditional && !untrusted.all)
       for (const [key, value] of assignmentsOf(segment.words))
@@ -1693,9 +1747,16 @@ const segmentTargets = (
         shells.push(...preloads.flatMap(read));
       } else if (INTERPRETERS.test(verb)) {
         // Inline code (`-c`, `-e`) is judged like a script file.
-        const code = args.findIndex((arg) => /^-[a-zA-Z]*[cep]$|^--(?:eval|print)$/.test(arg));
-        // As the shell expands it (`"…$HOME/…"`).
-        if (code >= 0) others.push(...expansions(args[code + 1] ?? "", vars, loops));
+        const code = args.findIndex((arg) => INLINE_CODE.test(arg));
+        // As the shell expands it (`"…$HOME/…"`); `--eval=<code>` holds it.
+        if (code >= 0)
+          others.push(
+            ...expansions(
+              args[code].includes("=") ? args[code] : (args[code + 1] ?? ""),
+              vars,
+              loops,
+            ),
+          );
         // A script file, or the heredoc it reads on stdin (`python3 <<EOF`).
         others.push(
           ...(named === undefined
@@ -1783,11 +1844,15 @@ const segmentTargets = (
           ? opaqueWrites(
               body,
               scriptOf,
-              // A heredoc's text, unless an unquoted one may expand a `$` or backtick in it.
+              // A heredoc's text, unless an unquoted one may expand a `$` or backtick in it;
+              // an unquoted one joins a backslash-newline (`os.sys\⏎tem`).
               stdin &&
-                (/[$`]/.test(stdin) && /<<-?[ \t]*[^'"\\\s]/.test(command.replaceAll("\\\n", ""))
-                  ? null
+                (/<<-?[ \t]*[^'"\\\s]/.test(command.replaceAll("\\\n", ""))
+                  ? /[$`]/.test(stdin)
+                    ? null
+                    : stdin.replaceAll("\\\n", "")
                   : stdin),
+              /\b(?:NODE_OPTIONS|PYTHON[A-Z]+)\b/.test(command),
             )
           : null;
       // Named by the command it runs, past wrappers such as `env` or `sudo`.
