@@ -205,14 +205,17 @@ export async function main(
     );
   if (parsed.error) return emit(io, fail("invalid_input", parsed.error));
   // The calling subagent, as the host hook stamped this call (#883). Under a
-  // host, an exported WORKIT_AGENT_ID never stands in for the stamp.
+  // host, an exported WORKIT_AGENT_ID never stands in for the stamp; a check
+  // row records which of the two named its agent (#972).
   if (agentIdFromHostOnly(io.env)) {
-    const agent = claimAgentStamp(io.env, argv) ?? undefined;
+    const claimed = claimAgentStamp(io.env, argv);
+    const agent = claimed?.agentId ?? undefined;
     io.env = { ...io.env, WORKIT_AGENT_ID: agent };
+    io.agentFrom = claimed ? "stamp" : "none";
     if (overrides.env === undefined)
       if (agent) process.env.WORKIT_AGENT_ID = agent;
       else delete process.env.WORKIT_AGENT_ID;
-  }
+  } else io.agentFrom = "env";
   if (parsed.session !== undefined) {
     // The same gate the env var meets (verdicts, commits): where the host's
     // session is checked, the flag cannot name another one.

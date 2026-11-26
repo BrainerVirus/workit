@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the identity-variable guard now reads the script in glued short-option clusters such as `script -qc`, `su -lc` and `runuser -lc`, so an identity change inside them is denied.
 - `--body-file -` on Node no longer drops the start of a piped body when the writer is slow to close the pipe
 - a verdict under a hook-issued verifier or reviewer id now needs that id's token even from a shell with its host variables cleared (no WORKIT_HOST, WORKIT_HOST=cli, or a host named without its session); the merge gate also refuses such rows already recorded (unbound_session).
+- on Claude Code and Codex a verdict is held only to check runs whose agent id a claimed hook stamp named, so an agent id set from the shell no longer binds or clears a verdict; a run no stamp named prints that it is bound to no agent and the plain workit check call to rerun.
 
 ### Changed
 

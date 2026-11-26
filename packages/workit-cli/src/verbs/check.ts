@@ -87,7 +87,7 @@ import {
 } from "@workit-dev/core/src/ledger";
 import { emit, fail, ok, type EnvelopeCode, type Io } from "../output";
 import { progressFor, type ProgressStep } from "../progress";
-import { hostSessionFromEnv } from "@workit-dev/core/src/host-session";
+import { hostSessionFromEnv, STAMPING_HOSTS } from "@workit-dev/core/src/host-session";
 import {
   acquireLease,
   describeHolder,
@@ -878,6 +878,21 @@ async function prepareHeavy(
   };
 }
 
+/** The io of a running group: its members leave the unbound-run note to the group. */
+const grouped = new WeakSet<Io>();
+
+/**
+ * On a stamping host, a run no hook stamp named (a `workit` inside `bash -c`,
+ * a script or a substitution) is bound to no agent: no verdict is held to it
+ * or cleared by it (#972). Say so once, after the run, with the plain call.
+ */
+function unboundNote(io: Io, name: string | null): void {
+  if (io.agentFrom !== "none" || !STAMPING_HOSTS.has(hostSessionFromEnv(io.env).host ?? "")) return;
+  io.stderr(
+    `note: no hook stamp named this run's caller, so it is bound to no agent: no verdict is held to it or cleared by it; rerun it as a plain \`workit check ${name ?? "--name <name> -- <command>"}\` (not inside bash -c, a script or a substitution)\n`,
+  );
+}
+
 /**
  * `workit check <group>`: run each member of a configured group (the `ci` group
  * is what CI runs) as its own recorded check, light ones first so they never
@@ -904,6 +919,7 @@ async function runGroup(
   const failed: string[] = [];
   // A caller that stopped one member stopped the group: the rest never start.
   const interrupts = watchInterrupts();
+  grouped.add(io);
   try {
     for (const member of ordered) {
       io.stderr(
@@ -920,6 +936,7 @@ async function runGroup(
   } finally {
     interrupts.stop();
   }
+  unboundNote(io, group);
   if (failed.length) {
     io.stderr(
       `workit: check ${group}: FAILED ${failed.join(", ")} (${ordered.length - failed.length}/${ordered.length} passed)\n`,
@@ -1224,6 +1241,9 @@ export async function run(argv: string[], io: Io): Promise<number> {
   const row = {
     type: "check",
     actor,
+    // Whether a claimed hook stamp named the agent (#972): on a stamping host
+    // a verdict is held only to stamped rows (ledger.ts sessionOwnsRun).
+    agentFrom: io.agentFrom ?? "env",
     ...key,
     name,
     configured,
@@ -1366,6 +1386,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
         io.stderr(`  still unsatisfied: ${gap.ruleId}: ${gap.reason}\n`);
   }
   if (interruptedBy) io.stderr(`${interruptedHint(interruptedBy)}\n`);
+  if (!grouped.has(io)) unboundNote(io, name);
   if (!passed) return commandExit;
   if (recordError)
     return recordError.code === "busy" ? 4 : recordError.code === "invalid_input" ? 2 : 5;

@@ -73,7 +73,7 @@ test("Given a subagent's `workit check`, When the hook passes it, Then the comma
   const session = newSession();
   const decision = shellPre("workit check --cwd /w test", { session, agent: "a1" });
   expect(decision.kind === "rewrite" || decision.kind === "update-input").toBe(false);
-  expect(claim(session, ["check", "--cwd", "/w", "test"])).toBe("a1");
+  expect(claim(session, ["check", "--cwd", "/w", "test"])).toEqual({ agentId: "a1" });
   expect(claim(session, ["check", "--cwd", "/w", "test"])).toBeNull();
 });
 
@@ -82,12 +82,13 @@ test("Given a stamped call, Then another argv or another session claims nothing"
   shellPre("workit check lint", { session, agent: "a1" });
   expect(claim(session, ["check", "test"])).toBeNull();
   expect(claim(newSession(), ["check", "lint"])).toBeNull();
-  expect(claim(session, ["check", "lint"])).toBe("a1");
+  expect(claim(session, ["check", "lint"])).toEqual({ agentId: "a1" });
 });
 
-test("Given the lead's own call, Then its CLI gets no agent id", () => {
+test("Given the lead's own call, Then its CLI claims the lead's stamp (no agent id), which a call with no stamp does not", () => {
   const session = newSession();
   shellPre("workit check lint", { session });
+  expect(claim(session, ["check", "lint"])).toEqual({ agentId: null });
   expect(claim(session, ["check", "lint"])).toBeNull();
 });
 
@@ -110,7 +111,7 @@ test.each([
   const decision = shellPre(command, { session, agent: "a-2_b" });
   const ran = decision.kind === "rewrite" ? decision.command : command;
   expect(ran).not.toContain("WORKIT_AGENT_ID");
-  expect(claim(session, argv)).toBe("a-2_b");
+  expect(claim(session, argv)).toEqual({ agentId: "a-2_b" });
 });
 
 test("Given a word the shell expands or an agent id outside [A-Za-z0-9_-], Then nothing is stamped", () => {
@@ -139,7 +140,9 @@ test.each([
 ] as const)("%s", (_name, descriptor, host, expected) => {
   const session = newSession();
   shellPre("workit check lint", { session, agent: "a1" }, descriptor, host);
-  expect(claim(session, ["check", "lint"])).toBe(expected);
+  expect(claim(session, ["check", "lint"])).toEqual(
+    expected === null ? null : { agentId: expected },
+  );
 });
 
 test("Given a subagent's stamped `workit check`, When the CLI runs it, Then its check row carries the agent id and the lead's next run carries none", () => {
@@ -203,17 +206,33 @@ const agentsOf = (root: string) => {
     .filter((row) => row.type === "check")
     .map((row) => row.actor.agentId ?? null);
 };
-const runCheck = (root: string, env: NodeJS.ProcessEnv) => {
+/** Where each check row's agent id came from (#972), in ledger order. */
+const provenanceOf = (root: string) => {
+  const ledger = readLedger(root);
+  if (!ledger.ok) throw new Error(ledger.error);
+  return ledger.value.rows.filter((row) => row.type === "check").map((row) => row.agentFrom);
+};
+const spawnCheck = (root: string, env: NodeJS.ProcessEnv) => {
   const base: NodeJS.ProcessEnv = { ...process.env, WORKIT_WORKSPACE_ROOT: "", WORKIT_LEASE: "" };
   // The suite may itself run under a host: each case names the host it means.
-  for (const name of ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "WORKIT_SESSION_ID"])
+  for (const name of [
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "WORKIT_SESSION_ID",
+    "WORKIT_HOST",
+    "WORKIT_AGENT_ID",
+    "CODEX_THREAD_ID",
+    "OPENCODE_SESSION_ID",
+    "PI_SESSION_ID",
+  ])
     delete base[name];
   return spawnSync(BUN, [MAIN, "check", "--json", "--cwd", root, "ok"], {
     env: { ...base, ...env },
     encoding: "utf8",
     timeout: 120_000,
-  }).status;
+  });
 };
+const runCheck = (root: string, env: NodeJS.ProcessEnv) => spawnCheck(root, env).status;
 
 test("Given an agent shell that exports its own WORKIT_AGENT_ID, When workit runs under a host, Then only a claimed stamp names the agent: alone it is ignored, with a stamp the stamp wins", () => {
   const root = checkRepo();
@@ -236,6 +255,39 @@ test("Given an agent shell that exports its own WORKIT_AGENT_ID, When workit run
   expect(runCheck(root, { CODEX_THREAD_ID: newSession(), WORKIT_AGENT_ID: "forged" })).toBe(0);
   expect(runCheck(root, { WORKIT_SESSION_ID: session, WORKIT_AGENT_ID: "ci-run" })).toBe(0);
   expect(agentsOf(root)).toEqual([null, "a1", null, "ci-run"]);
+  expect(provenanceOf(root)).toEqual(["none", "stamp", "none", "env"]);
+});
+
+test("Given the lead's own stamped call, Then its row is stamp-bound with no agent id", () => {
+  const root = checkRepo();
+  const session = newSession();
+  shellPre(`workit check --json --cwd '${root}' ok`, { session }, undefined, undefined, root);
+  expect(runCheck(root, { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: session })).toBe(0);
+  expect(agentsOf(root)).toEqual([null]);
+  expect(provenanceOf(root)).toEqual(["stamp"]);
+});
+
+test("Given a run under Claude Code or Codex that no stamp named, Then it says the run is bound to no agent and names the plain call; a stamped run, an OpenCode child and a plain terminal do not", () => {
+  const root = checkRepo();
+  const session = newSession();
+  const note = "bound to no agent";
+  const claude = { WORKIT_HOST: "claude_code", WORKIT_SESSION_ID: session };
+  const unstamped = spawnCheck(root, claude);
+  expect(unstamped.status).toBe(0);
+  expect(unstamped.stderr).toContain(note);
+  expect(unstamped.stderr).toContain("rerun it as a plain `workit check ok`");
+  expect(spawnCheck(root, { CODEX_THREAD_ID: newSession() }).stderr).toContain(note);
+  shellPre(`workit check --json --cwd '${root}' ok`, { session }, undefined, undefined, root);
+  expect(spawnCheck(root, claude).stderr).not.toContain(note);
+  const child = `${newSession()}:ses_child`;
+  const opencode = {
+    OPENCODE_SESSION_ID: "ses_child",
+    WORKIT_HOST: "opencode",
+    WORKIT_SESSION_ID: child,
+  };
+  expect(spawnCheck(root, opencode).stderr).not.toContain(note);
+  expect(spawnCheck(root, { WORKIT_SESSION_ID: session }).stderr).not.toContain(note);
+  expect(provenanceOf(root)).toEqual(["none", "none", "stamp", "none", "env"]);
 });
 
 test("Given a Claude Code shell whose WORKIT_HOST was cleared, When it exports a forged WORKIT_AGENT_ID, Then the host's own variables still read as a host and the id is ignored", () => {
@@ -322,14 +374,14 @@ test("Given a finished call whose `workit` never ran, When its post-tool hook fi
   note(session, "workit check test", "toolu_other");
   shellPost("false && workit check lint", session, "toolu_done");
   expect(claim(session, ["check", "lint"])).toBeNull();
-  expect(claim(session, ["check", "test"])).toBe("a1");
+  expect(claim(session, ["check", "test"])).toEqual({ agentId: "a1" });
 });
 
 test("Given a call that backgrounds its `workit` with `&`, When its post-tool hook fires, Then the stamp stays for the call to claim", () => {
   const session = newSession();
   note(session, "workit check lint > out.txt 2>&1 &", "toolu_bg");
   shellPost("workit check lint > out.txt 2>&1 &", session, "toolu_bg");
-  expect(claim(session, ["check", "lint"])).toBe("a1");
+  expect(claim(session, ["check", "lint"])).toEqual({ agentId: "a1" });
 });
 
 test("Given Claude Code's launcher, When PostToolUse reports a finished `workit` call, Then it drops that call's stamp on its fast path; a run_in_background call keeps it", () => {
@@ -353,5 +405,5 @@ test("Given Claude Code's launcher, When PostToolUse reports a finished `workit`
   expect(claim(session, ["check", "lint"])).toBeNull();
   note(session, "workit check lint", "toolu_bg2");
   expect(post("toolu_bg2", true).status).toBe(0);
-  expect(claim(session, ["check", "lint"])).toBe("a1");
+  expect(claim(session, ["check", "lint"])).toEqual({ agentId: "a1" });
 });
