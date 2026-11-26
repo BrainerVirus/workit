@@ -325,31 +325,34 @@ const busyAtOnce = (committing: boolean) => {
 };
 
 test.each([
-  ["no other writer commits", false, 100],
-  ["other writers keep committing", true, 20],
+  // Gives up once 100 ms pass with no commit.
+  ["no other writer commits", false, 100, [5, 10, 20, 40, 50]],
+  // Gives up at 12 busy timeouts (240 ms) though commits keep arriving.
+  ["other writers keep committing", true, 20, [5, 10, 20, 40, 50, 50, 50, 50]],
 ] as const)(
   "Given SQLite answering busy at once and %s, When a writer waits, Then it backs off 5 ms doubling to 50 and gives up in bounded time",
-  (_, committing, waitMs) => {
+  (_, committing, waitMs, expected) => {
     const { db, attempts } = busyAtOnce(committing);
     const pauses: number[] = [];
-    const started = Date.now();
+    // A clock that moves only when the writer sleeps: a spin would never end.
+    let now = 0;
+    const clock = {
+      now: () => now,
+      sleep: (ms: number) => {
+        pauses.push(ms);
+        now += ms;
+      },
+    };
     let failure: unknown;
     try {
-      beginWrite(db, "/x/threads.db", waitMs, (ms) => {
-        pauses.push(ms);
-        Bun.sleepSync(ms);
-      });
+      beginWrite(db, "/x/threads.db", waitMs, clock);
     } catch (error) {
       failure = error;
     }
     expect(failure).toBeInstanceOf(ThreadsBusyError);
     // Every failed attempt but the last sleeps: no spinning.
-    expect(pauses.length).toBeGreaterThan(0);
-    expect(attempts()).toBe(pauses.length + 1);
-    expect(pauses.slice(0, 5)).toEqual([5, 10, 20, 40, 50].slice(0, pauses.length));
-    expect(Math.max(...pauses)).toBeLessThanOrEqual(50);
-    // Without commits the wait ends at waitMs; with them, at 12 busy timeouts.
-    expect(Date.now() - started).toBeLessThan(waitMs * 12 + 1000);
+    expect(pauses).toEqual([...expected]);
+    expect(attempts()).toBe(expected.length + 1);
   },
 );
 

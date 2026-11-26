@@ -225,20 +225,20 @@ export const beginWrite = (
   db: SqlDb,
   file: string,
   waitMs: number,
-  pauseFor: (ms: number) => void = sleep,
+  clock: { now: () => number; sleep: (ms: number) => void } = { now: Date.now, sleep },
 ): void => {
-  const start = Date.now();
+  const start = clock.now();
   let quietSince = start;
   let seen = dataVersion(db);
   let backoff = 0;
   for (;;) {
-    const attempt = Date.now();
+    const attempt = clock.now();
     try {
       db.exec("BEGIN IMMEDIATE");
       return;
     } catch (error) {
       if (!isBusy(error)) throw error;
-      const now = Date.now();
+      const now = clock.now();
       const version = dataVersion(db);
       if (version !== undefined && version !== seen) {
         seen = version;
@@ -248,7 +248,7 @@ export const beginWrite = (
         throw new ThreadsBusyError(file, waitMs, { cause: error });
       if (now - attempt < BUSY_FAST_FAIL_MS) {
         backoff = Math.min(backoff === 0 ? 5 : backoff * 2, 50);
-        pauseFor(backoff);
+        clock.sleep(backoff);
       } else backoff = 0;
     }
   }
