@@ -555,7 +555,10 @@ reviewer's failure. This holds on every host and with none: a shell that
 clears its host variables, or names `WORKIT_HOST=cli`, still needs the token
 for an id the hook issued. The row then carries `sessionBound: true`. Each id is
 issued once: a SubagentStart fired again for an id already issued mints no
-new token. The token hash lives in its own tree (`<state>/issued-tokens/`),
+new token. The token hash lives in its own tree (`<state>/issued-tokens/`)
+of the state dir your host's hooks pinned for the checkout, so a `workit`
+call run with another `WORKIT_STATE_DIR`, `XDG_STATE_HOME` or `HOME` reads
+the same tokens (and the hooks deny such a call under a host),
 which hooks older than tokens never write, and binding is sticky: once a lead
 has any token-bound id, a token-less record under it (an old cached plugin
 hook rewriting one, or issuing a new id) is refused as `unbound_session`. Only

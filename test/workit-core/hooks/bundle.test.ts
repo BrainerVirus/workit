@@ -195,7 +195,12 @@ const HOOK_ENTRIES = [
 // built command words, loop variables, raw `$(…)`, at/batch, find -i and negated tests, rsync --del)
 // takes it to 587,104 B (+1,328 B; Claude Code 580,461 B, Codex 568,781 B, Cursor 568,175 B). The
 // ceiling is core run plus 2 KiB.
-const BUDGET = 589_152;
+// state-dir-redirect (#980, 2026-11-26, Bun 1.4.5, rebased on 79736358): the identity
+// guard's state and config dir names, the CLI under its other names and renamed links, prefix
+// assignments scoped to their command (identity and host names too), PowerShell assignments only,
+// cmd `set`, the session-start pin, the pinned registry read and the 8.3-safe temp-dir check take
+// core run from 587,104 B to MEASURED. The ceiling is core run plus 2 KiB.
+const BUDGET = 579_532;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");

@@ -197,6 +197,15 @@ const mayHitHookGuard = (text) => {
     (all) => HOOK_ENTRY_TEXT.test(all) || RUNS_SCRIPT.test(all) || REMOVES_ABOVE.test(all),
   );
 };
+// A change to a state or config dir variable (#980), or a host's own variable:
+// the guard refuses one that reaches a workit run, under any of the CLI's names
+// (a renamed link included), so every assignment, unset or PowerShell env write goes to it.
+const STATE_NAME =
+  "(?:WORKIT_(?:STATE_DIR|CONFIG)\\w*|XDG_(?:STATE|CONFIG|DATA)_HOME|HOME|USERPROFILE|(?:LOCAL)?APPDATA|OPENCODE_SESSION_ID|PI_SESSION_ID|CODEX_THREAD_ID|CLAUDECODE|CLAUDE_CODE_ENTRYPOINT)";
+const STATE_ENV = new RegExp(
+  `${STATE_NAME}\\s*\\+?=|(?:unset|-u|--unset)[\\s=]+${STATE_NAME}|env:|EnvironmentVariable`,
+  "i",
+);
 // A lead's `workit` call goes too while a subagent's stamp waits to be claimed
 // (its call at a permission prompt, say): the runtime stamps the lead's call,
 // so one argv from two actors is ambiguous and neither claims the other's id.
@@ -799,6 +808,7 @@ const fastAllow = (() => {
         (WORKIT_CALL.test(command) && (value.agent_id || agentStampPending(value.session_id))) ||
         IDENTITY_ENV.test(command.replace(/['"\\]/g, "")) ||
         mayHitHookGuard(command) ||
+        STATE_ENV.test(command.replace(/['"\\]/g, "")) ||
         (WORKIT_CALL.test(command) &&
           (ENV_BUILTIN.test(command) || HOST_ENV.test(command.replace(/['"\\]/g, "")))) ||
         WORKIT_REORDER.test(command) ||

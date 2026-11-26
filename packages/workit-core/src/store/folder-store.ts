@@ -305,6 +305,13 @@ const below = (parent: string, child: string): boolean => {
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 };
 
+/**
+ * Whether `dir` is strictly inside the OS temp dir, both canonical
+ * (Windows 8.3 short names such as `RUNNER~1` resolve to the long ones).
+ */
+export const insideTempDir = (dir: string, tempDir: string = os.tmpdir()): boolean =>
+  below(canonical(tempDir), canonical(dir));
+
 /** Where a refused resolve is recorded under a test run, in the `WORKIT_TEST_RUN` dir. */
 export const TEST_RUN_REFUSALS = "folder-store-refusals.log";
 
@@ -326,7 +333,7 @@ export const testRunFolderRefusal = (
   if (env.WORKIT_TEST_RUN === undefined || !hasStray) return null;
   const real = canonical(folder);
   const tmp = canonical(tempDir);
-  if (below(tmp, real)) return null;
+  if (insideTempDir(folder, tempDir)) return null;
   return `workit test run (WORKIT_TEST_RUN): refusing to move ${path.join(real, ".workit")} into the run's throwaway state dir; a test must work in a fresh dir inside ${tmp}, never the temp dir itself, a parent of it or a folder outside it (#892)`;
 };
 

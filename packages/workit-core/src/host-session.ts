@@ -13,6 +13,7 @@ import path from "node:path";
 import { isProtectedTarget } from "./core/branch";
 import { resolveStateDir } from "./core/logger";
 import { currentBranch } from "./git/rev";
+import { insideTempDir } from "./store/folder-store";
 import { resolveStore } from "./store/paths";
 
 export type HostSession = { host: string | null; session: string | null };
@@ -110,17 +111,88 @@ export const ISSUED_SESSIONS_MARKER = "workit-issued-sessions/3";
 const hash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 32);
 
-// Issued ids live in the per-user state dir, keyed by lead session: a lead
+/**
+ * The state dir a host's hooks last used in this checkout, recorded in its
+ * guarded ledger dir (`<git common dir>/workit/ledger/issued-registry`) by
+ * SessionStart and SubagentStart, whose env is the host's (#980). A workit
+ * call's own WORKIT_STATE_DIR, XDG_STATE_HOME or HOME never moves it, so a
+ * registry an agent wrote under another dir is never read for trust.
+ */
+const PIN_FILE = "issued-registry";
+const pinFiles = new Map<string, string | null>();
+const pinFile = (cwd: string | undefined): string | null => {
+  if (cwd === undefined) return null;
+  const key = path.resolve(cwd);
+  const known = pinFiles.get(key);
+  if (known !== undefined) return known;
+  try {
+    const location = resolveStore(key);
+    // Not cached: git may answer on the next call.
+    if (location instanceof Error) return null;
+    const file = location.shared ? path.join(location.dir, "ledger", PIN_FILE) : null;
+    pinFiles.set(key, file);
+    return file;
+  } catch {
+    return null;
+  }
+};
+
+/** The pinned state dir of `cwd`'s checkout, or null (no checkout, or no hook pinned one yet). */
+const pinnedStateDir = (cwd: string | undefined): string | null => {
+  const file = pinFile(cwd);
+  if (file === null) return null;
+  try {
+    const pinned = fs.readFileSync(file, "utf8").trim();
+    return path.isAbsolute(pinned) ? pinned : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Where `cwd`'s issued-session registry lives: its pinned state dir, else this process's. */
+const registryDir = (cwd: string | undefined): string => pinnedStateDir(cwd) ?? resolveStateDir();
+
+/**
+ * A test run (WORKIT_TEST_RUN) pins only checkouts in the OS temp dir: a
+ * hook a test runs in a real checkout would point it at the run's throwaway state.
+ */
+const testRunSkipsPin = (file: string): boolean =>
+  process.env.WORKIT_TEST_RUN !== undefined &&
+  // `<git common dir>`, which exists before its `workit/ledger`.
+  !insideTempDir(path.dirname(path.dirname(path.dirname(file))));
+
+/**
+ * Pin `cwd`'s checkout to this process's state dir (#980). Only hooks call
+ * it, so the env is the host's. Fails open: an unpinned checkout reads the env's.
+ */
+export function pinIssuedRegistry(cwd: string): void {
+  const file = pinFile(cwd);
+  if (file === null) return;
+  const state = path.resolve(resolveStateDir());
+  if (pinnedStateDir(cwd) === state) return;
+  if (testRunSkipsPin(file)) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, `${state}\n`, { mode: 0o644 });
+    fs.renameSync(temp, file);
+  } catch {
+    // Fail open: the next hook pins it.
+  }
+}
+
+// Issued ids live in a per-user state dir, keyed by lead session: a lead
 // started in one repository delegates review of others, and the verifier
 // records its verdict from whichever repository it reviews (#294).
-const userIssuedRoot = (): string => path.join(resolveStateDir(), "issued");
+const userIssuedRoot = (cwd: string | undefined): string => path.join(registryDir(cwd), "issued");
 /**
  * Token hashes, one file per issued id under `<state>/issued-tokens/<lead
  * hash>/`: a tree hooks older than tokens never write, so an old cached
  * plugin hook that rewrites a record in `issued/` cannot strip its token.
  * Once a lead has one, every id under it needs a token (sticky binding).
  */
-const userTokenRoot = (): string => path.join(resolveStateDir(), "issued-tokens");
+const userTokenRoot = (cwd: string | undefined): string =>
+  path.join(registryDir(cwd), "issued-tokens");
 
 /**
  * Hooks of 8.10-8.12 wrote issued ids into `<store>/hooks/issued` of the
@@ -144,7 +216,7 @@ function migrateRepoIssued(cwd: string | undefined): void {
     try {
       const from = path.join(old, lead);
       if (!fs.statSync(from).isDirectory()) continue;
-      const to = path.join(userIssuedRoot(), lead);
+      const to = path.join(userIssuedRoot(cwd), lead);
       fs.mkdirSync(to, { recursive: true, mode: 0o700 });
       for (const id of fs.readdirSync(from)) {
         // Never over an existing per-user record: a legacy in-repo copy must
@@ -185,7 +257,7 @@ const noIssuedRecord = (cwd: string | undefined, lead: string): boolean => {
   if (cwd === undefined) return false;
   try {
     migrateRepoIssued(cwd);
-    return !fs.existsSync(path.join(userIssuedRoot(), hash(lead)));
+    return !fs.existsSync(path.join(userIssuedRoot(cwd), hash(lead)));
   } catch {
     return false;
   }
@@ -213,13 +285,17 @@ export function recordIssuedSession(cwd: string, lead: string, issued: string): 
   // `--token <token>` the hook prints, because the CLI parses it as a flag.
   const token = randomBytes(18).toString("hex");
   try {
+    // The hook's env is the host's: this checkout's verdicts read the registry it writes.
+    pinIssuedRegistry(cwd);
     migrateRepoIssued(cwd);
     const own = hash(issued);
-    const tokens = path.join(userTokenRoot(), hash(lead));
+    // Written where this hook's env puts it, the dir it just pinned.
+    const state = resolveStateDir();
+    const tokens = path.join(state, "issued-tokens", hash(lead));
     fs.mkdirSync(tokens, { recursive: true, mode: 0o700 });
     // `wx`: the first SubagentStart for an id wins; any later one fails here.
     fs.writeFileSync(path.join(tokens, own), `${tokenHash(token)}\n`, { mode: 0o600, flag: "wx" });
-    const dir = path.join(userIssuedRoot(), hash(lead));
+    const dir = path.join(state, "issued", hash(lead));
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(dir, own), `${ISSUED_SESSIONS_MARKER}\n`, { mode: 0o600 });
     pruneIssued(dir, own, tokens);
@@ -304,7 +380,7 @@ const issuedRecord = (cwd: string | undefined, claimed: string): string | null =
   migrateRepoIssued(cwd);
   try {
     return fs.readFileSync(
-      path.join(userIssuedRoot(), hash(claimed.slice(0, cut)), hash(claimed)),
+      path.join(userIssuedRoot(cwd), hash(claimed.slice(0, cut)), hash(claimed)),
       "utf8",
     );
   } catch {
@@ -315,10 +391,13 @@ const issuedRecord = (cwd: string | undefined, claimed: string): string | null =
 const TOKEN_HASH = /^([0-9a-f]{64})$/mu;
 
 /** The stored token hash for `claimed`, and whether its lead has any token at all. */
-const issuedToken = (claimed: string): { stored: string | null; leadBound: boolean } => {
+const issuedToken = (
+  cwd: string | undefined,
+  claimed: string,
+): { stored: string | null; leadBound: boolean } => {
   const cut = claimed.lastIndexOf(":");
   if (cut <= 0) return { stored: null, leadBound: false };
-  const dir = path.join(userTokenRoot(), hash(claimed.slice(0, cut)));
+  const dir = path.join(userTokenRoot(cwd), hash(claimed.slice(0, cut)));
   try {
     const text = fs.readFileSync(path.join(dir, hash(claimed)), "utf8");
     return { stored: TOKEN_HASH.exec(text)?.[1] ?? null, leadBound: true };
@@ -337,7 +416,7 @@ const issuedToken = (claimed: string): { stored: string | null; leadBound: boole
 export type IssuedBinding = "token" | "legacy";
 export function issuedBinding(cwd: string | undefined, claimed: string): IssuedBinding | null {
   const record = issuedRecord(cwd, claimed);
-  const { stored, leadBound } = issuedToken(claimed);
+  const { stored, leadBound } = issuedToken(cwd, claimed);
   if (stored) return "token";
   if (record === null) return null;
   return leadBound ? "token" : "legacy";
@@ -350,7 +429,7 @@ export function issuedTokenMatches(
   token: string | null | undefined,
 ): boolean {
   migrateRepoIssued(cwd);
-  const { stored } = issuedToken(claimed);
+  const { stored } = issuedToken(cwd, claimed);
   if (!stored || !token) return false;
   const given = Buffer.from(tokenHash(token.trim()));
   const want = Buffer.from(stored);

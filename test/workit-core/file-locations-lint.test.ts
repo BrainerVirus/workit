@@ -56,6 +56,19 @@ const ALLOW: Allow[] = [
     match: "(?:WORKIT_|XDG_|APPDATA|HOME)",
     why: "the guard pre-filter matches env-var spellings in a command's text; it builds no location",
   },
+  {
+    file: "packages/workit-claude-code/bin/workit-hook.mjs",
+    match: "XDG_(?:STATE|CONFIG|DATA)_HOME|HOME|USERPROFILE|(?:LOCAL)?APPDATA",
+    why: "the identity guard's routing matches state-variable names in a workit call's text (#980); it builds no location",
+  },
+  ...[
+    "XDG_(?:STATE|CONFIG|DATA)_HOME|HOME|USERPROFILE|(?:LOCAL)?APPDATA",
+    "XDG_|HOME|USERPROFILE|APPDATA",
+  ].map((match) => ({
+    file: "packages/workit-core/src/hooks/identity-env.ts",
+    match,
+    why: "the identity guard names the state variables a workit call may not change (#980); it builds no location",
+  })),
   ...[
     "packages/workit-cli/src/admin/detect-hosts.ts",
     "packages/workit-cli/src/admin/doctor.ts",

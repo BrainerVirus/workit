@@ -8,7 +8,12 @@ import {
 import type { HostDescriptor, Support } from "./descriptor";
 import { branchGuidance } from "../core/branch";
 import { workspaceTrailers } from "../core/workspaces";
-import { judgeBranch, recordIssuedSession, verdictCommand } from "../host-session";
+import {
+  judgeBranch,
+  pinIssuedRegistry,
+  recordIssuedSession,
+  verdictCommand,
+} from "../host-session";
 import { currentBranch, worktreeTop } from "../git/rev";
 import { cdWorkitSplit, cwdRewrite, npxWorkit, verbFirst } from "./cwd-normalize";
 import { workitOnPath } from "../core/heavy";
@@ -222,6 +227,8 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
     case "session.start": {
       // Orphans of dead sessions go, once per interval per user (#328).
       reapAtStart(input.cwd);
+      // This checkout's issued sessions are read from the host's state dir (#980).
+      pinIssuedRegistry(input.cwd);
       if (!usable(descriptor.context.sessionStart)) return NONE;
       // A session without an id cannot be told apart from another one, so it
       // is offered on every startup and never recorded.
@@ -375,11 +382,14 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         ? shellGate(input.cwd, event.command, owner, event.dialect)
         : NONE;
       if (gate.kind === "deny") return gate;
-      // Where hooks stamp the agent (#883), the identity variables are the host's.
-      const identity =
-        canDeny && stampsAgents(descriptor)
-          ? identityEnvChange(event.command, event.dialect)
-          : null;
+      // Where hooks stamp the agent (#883), the identity variables are the host's;
+      // on every host, a workit call keeps the host's state and config dirs (#980).
+      const identity = canDeny
+        ? identityEnvChange(event.command, event.dialect, {
+            identity: stampsAgents(descriptor),
+            cwd: input.cwd,
+          })
+        : null;
       if (identity) return { kind: "deny", reason: identityEnvDeny(identity), unblock: null };
       // A heavy command runs under the machine lease: rewritten where the
       // host can replace the command, else denied with the exact rewrite.
