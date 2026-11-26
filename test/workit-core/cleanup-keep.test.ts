@@ -12,7 +12,6 @@ import {
   mkdtempSync,
   realpathSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -26,13 +25,13 @@ import {
 import { readLedger, recordDecision } from "@/packages/workit-core/src/ledger";
 import { useConfigHome } from "../shared/grant-home";
 import { spawnHeavyTimeout } from "../shared/timeouts";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 setDefaultTimeout(spawnHeavyTimeout());
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const root of roots.splice(0)) removeDir(root);
 });
 
 const git = (cwd: string, ...args: string[]) =>
@@ -306,7 +305,7 @@ test("Given feature/x mid-rebase in a prunable worktree (directory gone, not loc
   const world = setup();
   squash(world);
   const dir = midRebase(world);
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeDir(dir);
   const out = await cleanup(world);
   expect(out.branchDeleted).toBe(false);
   expect(out.notes.join("\n")).toContain("a rebase is in progress");

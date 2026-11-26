@@ -1,7 +1,7 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
 import { checkoutKey, liveProbe } from "@/packages/workit-core/src/core/live-session";
 import { bootId, leaseDir, processStart } from "@/packages/workit-core/src/core/resources";
 import { spawnHeavyTimeout } from "@/test/shared/timeouts";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 
 // #835: build output (`bin/`, `target/`) and an older runtime's exact
 // `.workit/` markers no longer keep a merged worktree; a worktree a live
@@ -22,8 +23,7 @@ setDefaultTimeout(spawnHeavyTimeout());
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0))
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  for (const root of roots.splice(0)) removeDir(root);
 });
 
 const git = (cwd: string, ...args: string[]) =>

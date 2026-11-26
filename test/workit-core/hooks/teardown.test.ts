@@ -39,6 +39,7 @@ import { keepProc, openProcs, updateExtra } from "@/packages/workit-core/src/cor
 import { upsertProc, type ProcRow } from "@/packages/workit-core/src/store/threads/procs";
 import { main } from "@/packages/workit-cli/src/main";
 import { useConfigHome, type ConfigHome } from "../../shared/grant-home";
+import { removeDir } from "@/test/shared/helpers/remove-dir";
 import { fixture } from "./hook-fixtures";
 
 let configHome: ConfigHome;
@@ -53,16 +54,6 @@ const temp = (prefix: string) => {
   dirs.push(dir);
   return dir;
 };
-/** State dirs a real detached child ran in: its cmd.exe can outlive the suite on Windows, so removal is best effort. */
-const pinned: string[] = [];
-afterAll(() => {
-  for (const dir of pinned)
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    } catch {
-      // Still held by the child's cmd.exe (Windows); the OS temp cleanup takes it.
-    }
-});
 
 const ENV_KEYS = ["WORKIT_STATE_DIR", "WORKIT_INSTALL_ROOT", "WORKIT_SESSION_ID"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -131,9 +122,7 @@ afterEach(() => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   rmSync(path.join(configHome.configDir, "workspaces.json"), { force: true });
-  // Windows holds a dir a just-exited child ran in for a moment (EBUSY).
-  for (const dir of dirs.splice(0))
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  for (const dir of dirs.splice(0)) removeDir(dir);
 });
 
 let counter = 0;
@@ -436,18 +425,23 @@ test("Given a test run, Then the default spawner never starts a CLI", () => {
   expect(savedDeps.spawn(request)).toBe(false);
 });
 
+/** Whether a real process still runs (EPERM: it runs, as another user). */
+const running = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 test("Given a real owned launcher, When a session ends, Then it runs detached as that session in the state dir and its output lands in the teardown log", async () => {
   const cwd = temp("wk-teardown-repo-");
-  // The child runs in the state dir, not the repo (#904); on Windows its
-  // cmd.exe may still hold the state dir, which afterAll removes best effort.
-  const state = mkdtempSync(path.join(os.tmpdir(), "wk-teardown-pinned-"));
-  pinned.push(state);
-  process.env.WORKIT_STATE_DIR = state;
   const out = path.join(temp("wk-teardown-out-"), "argv.json");
   const script = path.join(path.dirname(out), "fake-cli.js");
   writeFileSync(
     script,
-    `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID, cwd: process.cwd() }));\n` +
+    `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify({ argv: process.argv.slice(2), session: process.env.WORKIT_SESSION_ID, cwd: process.cwd(), pid: process.pid, ppid: process.ppid }));\n` +
       `console.log("fake stop ran");\n` +
       // Its last act, so the test never returns while the child still runs in its temp dirs.
       `require("node:fs").writeFileSync(${JSON.stringify(`${out}.done`)}, "");\n`,
@@ -462,6 +456,13 @@ test("Given a real owned launcher, When a session ends, Then it runs detached as
   const deadline = Date.now() + 10_000;
   while (!existsSync(`${out}.done`) && Date.now() < deadline) await Bun.sleep(25);
   const ran = JSON.parse(readFileSync(out, "utf8"));
+  // On Windows the launcher's cmd.exe (node's parent) still has bin\workit.cmd
+  // open and the state dir as its cwd after node exits; afterEach can remove
+  // those dirs only once it is gone. On POSIX the launcher execs node, whose
+  // parent is this test process.
+  const launched = ran.ppid === process.pid ? [ran.pid] : [ran.pid, ran.ppid];
+  while (launched.some(running) && Date.now() < deadline) await Bun.sleep(25);
+  expect(launched.filter(running)).toEqual([]);
   expect(ran).toMatchObject({
     argv: ["stop", "--session", "sess-real", "--reason", "session-end"],
     session: "sess-real",
