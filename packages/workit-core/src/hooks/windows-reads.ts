@@ -175,11 +175,24 @@ const READ_MEMBERS =
 
 /**
  * Environment names that change what a program runs or loads: git's
- * (`GIT_PAGER`, `GIT_DIR`, `GIT_SSH_COMMAND`…), a pager or editor, the
- * search path, a dynamic loader's, an interpreter's startup options.
+ * (`GIT_PAGER`, `GIT_DIR`, `GIT_SSH_COMMAND`…), ssh's askpass, a pager or
+ * editor, the search paths (`PATH`, `PATHEXT`, `PSModulePath`, `NODE_PATH`),
+ * a dynamic loader's, an interpreter's or runtime's startup options (Node,
+ * Bun, Python, Perl, Ruby, the JVM, .NET), cargo's and rustc's wrappers,
+ * npm's config, a shell's startup file or prompt hook.
  */
 export const LOADER_ENV =
-  /^(?:GIT_\w*|PAGER|EDITOR|VISUAL|PATH|LD_\w*|DYLD_\w*|NODE_OPTIONS|PYTHON\w*|BASH_ENV|ENV|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB))$/i;
+  /^(?:GIT_\w*|SSH_ASKPASS(?:_REQUIRE)?|PAGER|EDITOR|VISUAL|PATH|PATHEXT|PSModulePath|LD_\w*|DYLD_\w*|NODE_OPTIONS|NODE_PATH|BUN_OPTIONS|npm_config_\w*|PYTHON\w*|BASH_ENV|ENV|PROMPT_COMMAND|PERL5(?:OPT|LIB)|RUBY(?:OPT|LIB)|RUSTC_(?:WORKSPACE_)?WRAPPER|CARGO_\w*|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS|DOTNET_STARTUP_HOOKS|COMPLUS_\w*|CORECLR_\w*)$/i;
+
+/** LOADER_ENV as a POSIX shell spells it: names are case-sensitive, but npm reads `npm_config_*` in any case. */
+const POSIX_LOADER_ENV = new RegExp(LOADER_ENV.source);
+
+/** Whether a POSIX shell's name `name` is in LOADER_ENV. */
+export const posixLoaderName = (name: string): boolean =>
+  POSIX_LOADER_ENV.test(name) || /^npm_config_\w*$/i.test(name);
+
+/** An assignment word whose loader value runs nothing: no pager, no lock (worktree-confine.ts judgeGit). */
+export const EXEMPT_LOADER = /^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0)$/;
 
 /** A cmd variable reference: `%X%`, or `!X!` under delayed expansion. */
 export const CMD_VAR = /%[^%\s]+%|![^!\s]+!/;

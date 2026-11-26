@@ -394,14 +394,31 @@ const powershellRun = (
   words: string[],
   stdin?: string,
 ): { script: string | null; opaque: boolean } => {
+  const { script, opaque, dir } = powershellParameters(words, stdin);
+  // `-WorkingDirectory X` before the script moves there first: the script's paths are X's.
+  return {
+    script:
+      script !== null && dir !== undefined
+        ? `Set-Location -LiteralPath '${dir.replaceAll("'", "''")}'; ${script}`
+        : script,
+    opaque,
+  };
+};
+
+/** `powershellRun` before its `-WorkingDirectory` (`dir`) is applied. */
+const powershellParameters = (
+  words: string[],
+  stdin?: string,
+): { script: string | null; opaque: boolean; dir?: string } => {
   const host = /powershell/i.test(words[0] ?? "") ? "powershell" : "pwsh";
   let opaque = false;
+  let dir: string | undefined;
   for (let index = 1; index < words.length; index++) {
     const word = words[index];
     // Windows PowerShell runs its positional words as a command; `pwsh`'s is a script file.
     if (!/^[-/]/.test(word))
       return host === "powershell"
-        ? { script: words.slice(index).join(" "), opaque }
+        ? { script: words.slice(index).join(" "), opaque, dir }
         : { script: null, opaque: true };
     const [, key = "", glued] = /^(?:--?|\/)([^:=]*)(?:[:=](.*))?$/s.exec(word) ?? [];
     const flag = key.toLowerCase();
@@ -418,12 +435,17 @@ const powershellRun = (
       opaque = true;
       continue;
     }
-    const [{ kind }] = matches;
+    const [{ kind, name }] = matches;
     const value = glued ?? words[index + 1];
+    if (name === "workingdirectory") dir = value;
     if (kind === "info") return { script: null, opaque: opaque || index < words.length - 1 };
     if (kind === "encoded") {
       try {
-        return { script: Buffer.from(value ?? "", "base64").toString("utf16le"), opaque: true };
+        return {
+          script: Buffer.from(value ?? "", "base64").toString("utf16le"),
+          opaque: true,
+          dir,
+        };
       } catch {
         return { script: null, opaque: true };
       }
@@ -432,15 +454,17 @@ const powershellRun = (
       return {
         script: value ?? null,
         opaque: opaque || glued !== undefined || value === undefined,
+        dir,
       };
     if (kind === "script") {
       // `-c -` reads the script on stdin; `-Command:…` is not a form Workit reads.
-      if (value === "-") return { script: stdin ?? null, opaque: true };
+      if (value === "-") return { script: stdin ?? null, opaque: true, dir };
       const rest =
         glued === undefined ? words.slice(index + 1) : [glued, ...words.slice(index + 1)];
       return {
         script: rest.join(" ") || null,
         opaque: opaque || glued !== undefined || !rest.length,
+        dir,
       };
     }
     opaque ||= kind === "opaque";

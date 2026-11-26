@@ -43,6 +43,7 @@ import {
   workitInvocations,
 } from "./raw-git";
 import { segmentsOf, type ShellDialect } from "./shell-words";
+import { EXEMPT_LOADER, posixLoaderName } from "./windows-reads";
 import {
   configWrites,
   inlineWhy,
@@ -820,11 +821,26 @@ const remoteIn = (dir: string, name: string, repo: string | null): boolean => {
   return url !== undefined && literalIn(url, repo, true);
 };
 
+/** Names that point git or its pager at config or code Workit does not read: `$HOME/.gitconfig`, `LESSOPEN`. */
+const JUDGE_CONFIG_ENV = /^(?:HOME|XDG_CONFIG_HOME|LESS\w*)$/;
+
+/**
+ * Whether a judge's git may run after assignment `word` (a prefix, `env`'s or
+ * an export's): an exempt loader value, or a name outside LOADER_ENV and
+ * JUDGE_CONFIG_ENV whose value the shell does not expand.
+ */
+const judgeEnvAllowed = (word: string): boolean => {
+  if (EXEMPT_LOADER.test(word)) return true;
+  const [, name = "", value = ""] = /^(\w+)\+?=([\s\S]*)$/.exec(word) ?? [];
+  return !posixLoaderName(name) && !JUDGE_CONFIG_ENV.test(name) && !/[$`]/.test(value);
+};
+
 /**
  * Why a judge may not run the git in `command` (#790): a verb or option
- * outside `GIT_VERBS`, a wrapper but timeout, nice, time or command, an
- * environment but PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0, LC_*, LANG,
- * TZ, `-c`, a source outside scratch and the judged repository, or
+ * outside `GIT_VERBS`, a wrapper but env (assignments only), timeout, nice,
+ * time or command, an environment that sets a LOADER_ENV name (but
+ * PAGER=cat, GIT_PAGER=cat, GIT_OPTIONAL_LOCKS=0) or a JUDGE_CONFIG_ENV one,
+ * `-c`, a source outside scratch and the judged repository, or
  * `--git-dir`/`--work-tree` outside scratch. A `status` only refreshes the
  * index's stat cache, never content, refs or config. Null when it may.
  */
@@ -842,6 +858,15 @@ const judgeGit = (
     while (/^(?:if|then|elif|else|do|while|until|!|\{|\()$/.test(words[at] ?? "")) at++;
     const lead: string[] = [];
     while (/^\w+\+?=/.test(words[at] ?? "")) lead.push(words[at++]);
+    // `env A=b git …` with no option sets what a prefix would; an option (`-i`, `-S`) stays a wrapper.
+    if (words[at] === "env" && !segment.expands?.includes(at)) {
+      let after = at + 1;
+      while (/^\w+\+?=/.test(words[after] ?? "")) after++;
+      if (!words[after]?.startsWith("-")) {
+        lead.push(...words.slice(at + 1, after));
+        at = after;
+      }
+    }
     const name = path.basename(words[at] ?? "");
     // git anywhere but the command (or behind timeout, nice, time or command with only
     // options and numbers) runs behind a wrapper Workit does not judge, or is an alias or
@@ -880,8 +905,7 @@ const judgeGit = (
     // The environment a git in this command sees (assignments to exported names too).
     // BASH_ENV and ENV run a script in any shell, git in it or not.
     for (const word of runsGit ? lead : lead.filter((set) => /^(?:BASH_)?ENV=/.test(set)))
-      if (!/^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0|(?:LC_\w+|LANG|TZ)=[^$`]*)$/.test(word))
-        why ??= `\`${word}\` is not allowed`;
+      if (!judgeEnvAllowed(word)) why ??= `\`${word}\` is not allowed`;
     let index = start < 0 ? words.length : start + 1;
     let dir = "";
     for (; !why && words[index]?.startsWith("-") && words[index] !== "--version"; index++) {

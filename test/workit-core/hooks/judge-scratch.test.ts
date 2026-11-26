@@ -380,7 +380,8 @@ test("Given a judge's git, When it uses a verb, option, transport or env outside
     `git -C ${rt} fetch ${path.join(root, "elsewhere")}`,
     `git -C ${remoteOut} fetch o`,
     `git -C ${trailer} commit -qm x`,
-    `export FOO=1; git -C ${wt} log`,
+    `export GIT_EXTERNAL_DIFF=/tmp/x; git -C ${wt} log`,
+    `export HOME=${scratch}; git -C ${wt} log`,
   ]) {
     const out = verifier("Bash", { command: posix(command) });
     expect(out, command).toBe("deny");
@@ -452,9 +453,18 @@ test("Given a judge's git behind an assignment or a wrapper, When only the allow
   const rt = path.join(scratch, "wrap");
   git(wt, "init", "-q", "-b", "main", rt);
   for (const command of [
-    `FOO=1 timeout 5 git -C ${wt} log`,
-    `env FOO=1 git -C ${wt} log`,
-    `env git -C ${wt} log`,
+    `env -i git -C ${wt} log`,
+    `env -u HOME git -C ${wt} log`,
+    `env GIT_PAGER=sh git -C ${wt} log`,
+    `env FOO=1 PAGER=less git -C ${wt} log`,
+    `env HOME=${scratch} git -C ${wt} status`,
+    `XDG_CONFIG_HOME=${scratch} git -C ${wt} status`,
+    `LESSOPEN='|sh x' git -C ${wt} log`,
+    `NODE_OPTIONS=-r git -C ${wt} log`,
+    `CARGO_HOME=x git -C ${wt} log`,
+    `npm_config_x=1 git -C ${wt} log`,
+    "FOO=`id` git -C " + wt + " log",
+    `env env git -C ${wt} log`,
     `nohup git -C ${wt} log`,
     `xargs git -C ${rt} commit -qm x`,
     `sudo git -C ${wt} log`,
@@ -469,6 +479,16 @@ test("Given a judge's git behind an assignment or a wrapper, When only the allow
     `time git -C ${wt} log`,
     `command git -C ${wt} log`,
     `GIT_OPTIONAL_LOCKS=0 git -C ${wt} status`,
+    // A non-loader name, or an exempt loader value, before a read (#880 follow-up).
+    `FOO=1 timeout 5 git -C ${wt} log`,
+    `env FOO=1 git -C ${wt} log`,
+    `env git -C ${wt} log`,
+    `env GIT_PAGER=cat git -C ${wt} log`,
+    `env A=b LC_ALL=C GIT_OPTIONAL_LOCKS=0 git -C ${wt} status`,
+    `A=b git -C ${wt} status`,
+    `A=b B='c d' git -C ${wt} log`,
+    `A=b ls ${wt}`,
+    `env A=b cat ${path.join(wt, "a.ts")}`,
     `grep -rn git ${path.join(wt, "a.ts")}`,
     `if git -C ${wt} diff --quiet; then echo same; fi`,
   ])

@@ -435,6 +435,95 @@ test("Given a PowerShell $env: or a Bash assignment of a name that changes what 
   ]);
 });
 
+// #967 residuals: more names that load code, for Bash and PowerShell alike; npm's in any case.
+test("Given a Bash or PowerShell assignment of an askpass, a cargo, JVM, .NET, Bun, npm or search-path name, When a judge or an implementer runs a program after it in the lead's checkout, Then it is denied; the exempt values run", () => {
+  const names = [
+    "SSH_ASKPASS",
+    "SSH_ASKPASS_REQUIRE",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "CARGO_BUILD_RUSTC_WRAPPER",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "DOTNET_STARTUP_HOOKS",
+    "COMPLUS_X",
+    "CORECLR_PROFILER_PATH",
+    "BUN_OPTIONS",
+    "NODE_PATH",
+    "npm_config_script_shell",
+    "NPM_CONFIG_SCRIPT_SHELL",
+    "Npm_Config_Node_Options",
+    "PROMPT_COMMAND",
+    "PATHEXT",
+    "PSModulePath",
+  ];
+  deniedInLead(names.map((name) => `pwsh -c '$env:${name} = "x"; git status'`));
+  denied(
+    implementer,
+    names.flatMap((name) => [
+      `cd ${lead} && ${name}=x git status`,
+      `cd ${lead} && export ${name}=x; ls`,
+      `cd ${lead} && env ${name}=x ls`,
+    ]),
+    IMPLEMENTER,
+  );
+  denied(
+    verifier,
+    names.map((name) => `${name}=x git status`),
+    VERIFIER,
+  );
+  // Case matters to a POSIX shell for every name but npm's.
+  allowed(implementer, [
+    `cd ${lead} && ssh_askpass=x git status`,
+    `cd ${lead} && GIT_PAGER=cat PAGER=cat GIT_OPTIONAL_LOCKS=0 git log`,
+  ]);
+});
+
+// #967 residuals: `pwsh -wd X` moves to X before the script runs; a pipe name and -Interactive are benign.
+test("Given pwsh -WorkingDirectory before -c, When the script writes a relative path, Then the path is read in that directory", () => {
+  // From the implementer's worktree, -wd moves the script's writes into the lead's checkout.
+  denied(
+    implementer,
+    [
+      `pwsh -wd ${lead} -c 'ri package.json'`,
+      `pwsh -WorkingDirectory ${lead} -c 'ri package.json'`,
+      `pwsh -WorkingDirectory:${lead} -c 'ri package.json'`,
+      `pwsh -NoProfile -wd ${lead} -CommandWithArgs 'ri package.json'`,
+    ],
+    IMPLEMENTER,
+  );
+  // From the lead's checkout, -wd moves them into the worktree.
+  allowed(implementer, [
+    `cd ${lead} && pwsh -wd ${wt} -c 'ri package.json'`,
+    `cd ${lead} && pwsh -WorkingDirectory ${wt} -c 'sc f a'`,
+  ]);
+  // A -wd after -c is part of the script, not a directory.
+  denied(implementer, [`cd ${lead} && pwsh -c 'ri package.json' -wd ${wt}`], IMPLEMENTER);
+  deniedInLead([
+    "pwsh -CustomPipeName p -c 'ri package.json'",
+    "pwsh -Interactive -c 'ri package.json'",
+    "pwsh -i -c 'ri package.json'",
+  ]);
+  allowedInLead([
+    "pwsh -CustomPipeName p -c Get-ChildItem",
+    "pwsh -Interactive -c Get-ChildItem",
+    "pwsh -i -NoProfile -c Get-ChildItem",
+  ]);
+});
+
+// #967 residuals: a judge's read behind a non-loader assignment or `env` runs.
+test("Given a judge, When an env or prefix assignment of a non-loader name or an exempt value comes before a read, Then it runs; a loader name is still denied", () => {
+  allowed(verifier, [
+    "env GIT_PAGER=cat git log",
+    "A=b git status",
+    "env A=b git status",
+    "A=b ls",
+    "env A=b ls",
+  ]);
+  denied(verifier, ["env GIT_PAGER=sh git log", "env NODE_PATH=x git status"], VERIFIER);
+});
+
 // Item 4: a command word spelled with a cmd variable may be any program.
 test("Given a command word that is a cmd variable, When a judge or an implementer runs it in the lead's checkout, Then it is denied", () => {
   deniedInLead([
