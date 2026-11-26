@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `workit changelog apply` writes CHANGELOG.md through a temp file and a rename, keeping its mode, CRLF line endings and symlinks, and the roll before it reads every release tag's changelog in two batched git calls, so `pr create --changelog` no longer pays a git process per tag.
 - under worktree and scratch confinement, a PowerShell statement (a pwsh -c script or the PowerShell tool) or a cmd /c statement now passes only when its command is a known read; writer cmdlets and aliases, .NET static calls, & and dot-source invocation, script paths, stdin scripts, glued -EncodedCommand forms, xargs -J and find -exec {} count as writes in their run directory
 - under a judge's or an implementer's confinement, a pwsh or powershell -File script (and pwsh x.ps1), an -EncodedCommand (-enc, -e), iex or Invoke-Expression inside a -Command script, a cmd /c link or write target spelled with a %VAR% or !VAR! variable, and an xargs or parallel command whose name stdin fills in (xargs -I{} {} f) count as a write in the directory they run in; pwsh -c Get-ChildItem, cmd /c dir and xargs cat still run (#880).
+- the write confinement counts more loader environment names (SSH askpass, cargo and rustc wrappers, JVM and .NET startup options, BUN_OPTIONS, NODE_PATH, npm_config_*, PROMPT_COMMAND, PATHEXT, PSModulePath), reads a pwsh -WorkingDirectory before the script as a cd, and lets a judge run a read after a non-loader env or prefix assignment
 
 ### Changed
 
