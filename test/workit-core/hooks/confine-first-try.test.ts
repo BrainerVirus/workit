@@ -175,8 +175,9 @@ test("Given a verifier, When it reads a path from a literal assignment (W=<check
     "W=$(cat f); git -C $W log",
     `GIT_DIR=${lead}/.git; git log`,
     `W=${lead}; W=/tmp; git -C $W log`,
-    `W=${lead} git -C ${lead} log`,
   ]);
+  // A prefix assignment of a non-loader name only sets git's environment (#967 residuals).
+  allowed(verifier, [`W=${lead} git -C ${lead} log`]);
 });
 
 test("Given a verifier, When a literal assignment's name is single-quoted, escaped or read by a script, Then it is denied", () => {
