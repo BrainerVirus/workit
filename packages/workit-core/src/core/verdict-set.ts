@@ -224,6 +224,34 @@ export function recordSetVoid(
   return written.ok ? { ok: true, value: true } : written;
 }
 
+/**
+ * Whether a `pr.gate` row (#891) still stands: the verdict it cited is not
+ * voided in `rows` (this checkout's ledger) and, for a set cover, it has not
+ * expired (its `expires`, else SET_TTL_MS after the row) and the store holds
+ * no void of it. The Stop hook reads this instead of the set readers.
+ */
+export function gateStands(
+  cwd: string,
+  gate: ReadRow,
+  rows: readonly ReadRow[],
+  now: number = Date.now(),
+): boolean {
+  const id = typeof gate.verdictId === "string" ? gate.verdictId : null;
+  if (id !== null && verdictVoids(rows).has(id)) return false;
+  if (gate.via !== "set") return true;
+  const until =
+    typeof gate.expires === "string" ? Date.parse(gate.expires) : Date.parse(gate.at) + SET_TTL_MS;
+  if (!(until > now)) return false;
+  if (id === null) return true;
+  const read = readLedgerAt(cwd, setStorePath(), { integrity: true });
+  return (
+    read.ok &&
+    !read.value.rows.some(
+      (row) => row.type === SET_VOID && row.target === id && row.integrity === "verified",
+    )
+  );
+}
+
 /** The set verdict that covers a PR head. */
 export type SetCover = {
   set: string;
