@@ -1,0 +1,16 @@
+{
+  "session_id": "codex-session-1",
+  "agent_id": "019ac0de-5ab0-7c3e-9f2a-6d1b2c3d4e5f",
+  "agent_type": "default",
+  "cwd": "__CWD__",
+  "model": "gpt-5",
+  "permission_mode": "default",
+  "transcript_path": null,
+  "hook_event_name": "PreToolUse",
+  "turn_id": "turn-1",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "workit check lint"
+  },
+  "tool_use_id": "call-3"
+}

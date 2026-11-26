@@ -202,7 +202,11 @@ const HOOK_ENTRIES = [
 // core run from 587,104 B to 590,752 B (+3,648 B; Claude Code 584,109 B, Codex 572,433 B, Cursor
 // 571,827 B). The ceiling
 // is core run plus 2 KiB.
-const BUDGET = 592_800;
+// codex-stamps (#994, 2026-11-26, Bun 1.4.5, on 840256ab): a Codex call's stamp filed under the
+// calling thread (hooks/handle.ts stampKey) and the stamp layout shared with the Codex launcher
+// (hooks/stamp-hint.ts) take core run from 590,752 B to 591,297 B (+545 B; Claude Code 584,653 B,
+// Codex 572,977 B, Cursor 572,371 B). The ceiling is core run plus 2 KiB.
+const BUDGET = 593_345;
 const PINNED_BUN = (
   JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { packageManager?: string }
 ).packageManager?.replace(/^bun@/, "");
@@ -302,7 +306,7 @@ test("a host plugin or MCP bundle loads no setup/doctor/admin modules", () => {
 
 // Codex runs its hook on every tool call plus PostToolUse after every shell
 // call. The entry answers the calls that cannot matter (shell commands with
-// no git/gh/glab and no heavy word (core/heavy-words.ts),
+// no git/gh/glab, no `workit` call and no heavy word (core/heavy-words.ts),
 // PostToolUse without a commit) before the runtime chunk loads, so
 // it must stay a few hundred bytes; the runtime still answers the rest.
 test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab and maybe-heavy commands", () => {
@@ -321,7 +325,10 @@ test("the Codex hook entry stays tiny and loads the runtime only for git/gh/glab
     // too); 5,186 B measured, plus 256 B. 2026-11-12 (#780): it also sends a ytrack command
     // word, past wrappers and runners, and keeps a mere mention quiet; 5,508 B, plus 256 B.
     // 2026-11-19 (#777): `feedback` joins the user-only words; 5,770 B, plus 256 B.
-    expect(statSync(entry).size).toBeLessThanOrEqual(6_026);
+    // 2026-11-26 (#994, Bun 1.4.5): every plain `workit` call and an identity or state
+    // variable change go to the runtime, and PostToolUse drops a finished call's stamps,
+    // through core hooks/stamp-hint.ts; 5,864 B -> 6,098 B, plus 256 B.
+    expect(statSync(entry).size).toBeLessThanOrEqual(6_354);
     const repo = path.join(out, "repo");
     spawnSync("git", ["init", "-q", "-b", "feature/x", repo]);
     mkdirSync(path.join(repo, ".git", "workit"));

@@ -5,7 +5,8 @@
 // hosts carry the same session id their hooks see (M5):
 //   - OpenCode V2: OPENCODE_SESSION_ID (the shell tool's session id);
 //   - Pi: PI_SESSION_ID (the bash tool exposes the Pi session id);
-//   - Codex CLI and Desktop: CODEX_THREAD_ID (the thread id hooks get as session_id).
+//   - Codex CLI and Desktop: CODEX_THREAD_ID (the thread id hooks get as session_id;
+//     a subagent's shell carries its own thread, which its hooks get as agent_id).
 // Cursor puts no conversation id in its shell; its hook names the id to use.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
@@ -34,7 +35,8 @@ const HOST_SESSION_VARS: ReadonlyArray<readonly [string, (env: NodeJS.ProcessEnv
 /**
  * Hosts whose hook stamps every plain `workit` call with its calling agent
  * (agent-stamp.ts): there a verdict is held only to the check rows a claimed
- * stamp names (ledger.ts `sessionOwnsRun`, #972).
+ * stamp names (ledger.ts `sessionOwnsRun`, #972). On Codex each thread is its
+ * own session, so its stamp rows carry that thread and no agent id (#994).
  */
 export const STAMPING_HOSTS: ReadonlySet<string> = new Set([
   "claude_code",

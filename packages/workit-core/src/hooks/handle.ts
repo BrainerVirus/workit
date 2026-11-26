@@ -87,6 +87,28 @@ const stampsAgents = (descriptor: HostDescriptor): boolean =>
   descriptor.transport === "hook-process" && usable(descriptor.provenance.agentIdOnTool);
 const NONE: HookDecision = { kind: "none" };
 
+/**
+ * Hosts whose subagent shell carries the subagent's own thread id (Codex:
+ * CODEX_THREAD_ID, measured on codex-cli 0.171), so each subagent acts as its
+ * own Workit session rather than `<lead>:<agent id>` (#994).
+ */
+const subagentShellIsOwnSession = (descriptor: HostDescriptor): boolean =>
+  descriptor.host === "codex_cli" || descriptor.host === "codex_desktop";
+
+/**
+ * Where a call's agent stamp is filed: on an own-shell host, under the calling
+ * thread (the subagent's id, else the lead's session) with no agent part, so
+ * the CLI claims it under that shell's own session; elsewhere under the lead's
+ * session with the subagent's id.
+ */
+const stampKey = (
+  input: HookInput,
+  descriptor: HostDescriptor,
+): { session: string | null; agentId: string | null } =>
+  subagentShellIsOwnSession(descriptor) && input.session.agentId
+    ? { session: input.session.agentId, agentId: null }
+    : { session: input.session.id, agentId: input.session.agentId };
+
 const resendsOnChange = (descriptor: HostDescriptor): boolean =>
   descriptor.context.turnResend === "on-change" && usable(descriptor.context.perTurn);
 
@@ -175,7 +197,7 @@ const subagentStartText = (
   // Codex runs a subagent's shell with its own CODEX_THREAD_ID: the CLI already
   // acts as that session, so the line names no --session and no --token (a
   // token on a command line lands in the rollout, #427) and nothing is issued.
-  if (descriptor.host === "codex_cli" || descriptor.host === "codex_desktop")
+  if (subagentShellIsOwnSession(descriptor))
     return `${readOnly} Its shell already acts as its own Workit session, so the ledger tells its verdicts apart from the author's. Record the verdict with exactly this command (pick the result${pick}, name the candidate branch if it differs, say what you ran): \`${verdictCommand({ branch, judge, cwd: at })}\`. Add no session or token option to it, and never set WORKIT_SESSION_ID by hand.${checksText}`;
   // `ledger verdict` accepts `<lead>:<agent id>` only when this hook issued it,
   // and only with the token it hands to this subagent alone. Claude Code
@@ -430,16 +452,19 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
         !lease && input.host === "claude_code"
           ? workitBypassFlag(event.command, event.dialect)
           : null;
-      // Each `workit` call carries its agent to the CLI (#883): no host puts a
-      // subagent's id in its shell, and a changed command loses its allow rule.
-      if (stampsAgents(descriptor))
+      // Each `workit` call carries its agent to the CLI (#883): Claude Code puts
+      // no subagent id in its shell, and a changed command loses its allow rule.
+      // A Codex subagent's shell is its own thread, so its stamp is filed there (#994).
+      if (stampsAgents(descriptor)) {
+        const key = stampKey(input, descriptor);
         noteAgentStamps(
           process.env,
-          input.session.id,
-          input.session.agentId,
+          key.session,
+          key.agentId,
           lease?.command ?? cwdCommand ?? event.command,
           { dialect: event.dialect, toolUseId: event.toolUseId },
         );
+      }
       if (bypass) return { kind: "ask", reason: bypass };
       const rewrittenTo = lease?.command ?? cwdCommand;
       const rewritten = (text: string | null): HookDecision =>
@@ -481,7 +506,12 @@ function decide(input: HookInput, deps: HookDeps): HookDecision {
       if (usable(descriptor.events["shell.post"].support))
         rawGitPost(input, event.command, callKey(event.toolUseId, event.command));
       if (stampsAgents(descriptor))
-        dropAgentStamps(process.env, input.session.id, event.toolUseId, event.command);
+        dropAgentStamps(
+          process.env,
+          stampKey(input, descriptor).session,
+          event.toolUseId,
+          event.command,
+        );
       return NONE;
     case "write.pre": {
       if (!usable(descriptor.events["write.pre"].support)) return NONE;

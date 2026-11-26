@@ -13,6 +13,7 @@ import {
 } from "@/packages/workit-core/src/hooks/index";
 import { fixture, startTask, tempRoot } from "@/test/workit-core/hooks/hook-fixtures";
 import { sessionClaimRefusal } from "@/packages/workit-core/src/host-session";
+import { claimAgentStamp } from "@/packages/workit-core/src/agent-stamp";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -144,6 +145,19 @@ test("G a Codex SubagentStart, T Workit judges get their own session and the imp
     expect(text, other).toContain("read-only/agent-guided");
     expect(text, other).not.toContain("Its own Workit session");
   }
+});
+
+test("G a Codex subagent's PreToolUse (agent_id, agent_type, the lead's session_id), W it runs `workit check lint`, T its own thread claims the stamp and the lead's does not (#994)", () => {
+  const root = repo();
+  const payload = fixture("codex", "pre-tool-use-bash-subagent", root);
+  dispatchHook(codexAdapter, payload, {});
+  const claim = (thread: string) =>
+    claimAgentStamp({ WORKIT_STATE_DIR: process.env.WORKIT_STATE_DIR, CODEX_THREAD_ID: thread }, [
+      "check",
+      "lint",
+    ]);
+  expect(claim(String(payload.session_id))).toBeNull();
+  expect(claim(String(payload.agent_id))).toEqual({ agentId: null });
 });
 
 test("G a Claude Code SubagentStart, T only the plugin-namespaced workit:<role> agents get role guidance", () => {

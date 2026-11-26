@@ -116,6 +116,8 @@ export const CODEX_DESCRIPTOR: HostDescriptor = {
     maxConcurrency: "undocumented",
     agentPrefix: "workit-",
   },
+  // Measured on codex-cli 0.171: a subagent's tool hooks carry agent_id (its own
+  // thread) and agent_type beside the lead's session_id; the lead's carry no agent_id.
   provenance: { sessionId: "native", agentIdOnTool: "partial", postToolObserve: "native" },
   interaction: { questions: "none", writeBoundary: "partial" },
   stopControl: "native",

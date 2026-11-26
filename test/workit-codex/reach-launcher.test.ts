@@ -2,8 +2,8 @@
 // Workit task store a plain write inside the repo and a read answer on the
 // quiet path (only a write that may reach a guarded path loads the runtime:
 // test/workit-core/hooks/write-reach.test.ts); with a store every writer verb
-// or file redirect does; apply_patch and any text that may run a user-only
-// Workit call always do.
+// or file redirect does; apply_patch, any text that may run a user-only
+// Workit call and any plain `workit` call (its agent stamp, #994) always do.
 import { afterAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -67,10 +67,9 @@ const READS = [
   "ls >/dev/null",
   "ls > /dev/null 2>&1",
   "ls >&2",
-  "workit task status",
 ];
 
-test("G Codex, W a write, a read, apply_patch or a user-only call with or without a task store, T only store writes, apply_patch and user-only calls load the runtime", () => {
+test("G Codex, W a write, a read, apply_patch or a user-only call with or without a task store, T only store writes, apply_patch and workit calls load the runtime", () => {
   const entry = quietOnly();
   const quiet = (cwd: string, tool_name: string, command: string) => {
     const child = spawnSync("node", [entry], {
@@ -106,6 +105,7 @@ test("G Codex, W a write, a read, apply_patch or a user-only call with or withou
     "workit gr\\\nant set a b=c",
     "work\\\nit setup --yes",
     "workit s$'e'tup --yes",
+    "workit task status",
   ])
     expect(quiet(plain, "bash", command), command).toBe(false);
 }, 400_000);
