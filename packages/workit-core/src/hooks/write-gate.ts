@@ -1611,8 +1611,7 @@ const segmentTargets = (
           ),
         );
     // `cmd /c "cd x && mklink …"`, `pwsh -c "a; b"`: every statement of the script.
-    const windows =
-      strict === "registry" && depth < 4 ? windowsScript(words, segment.stdin?.join("\n")) : null;
+    const windows = strict && depth < 4 ? windowsScript(words, segment.stdin?.join("\n")) : null;
     if (windows !== null && dir !== undefined)
       targets.push(...segmentTargets(dir, windows, "powershell", depth + 1, strict, vars));
     // `sudo -u U cp …`, `timeout 5 bash -c …`, `! cp …`: the wrapped command, judged on its own.
