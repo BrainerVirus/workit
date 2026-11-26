@@ -170,14 +170,14 @@ test("Given a subagent's stamped `workit check`, When the CLI runs it, Then its 
       timeout: 120_000,
     });
   shellPre(
-    `workit check --json --cwd ${root} ok`,
+    `workit check --json --cwd '${root}' ok`,
     { session, agent: "a1" },
     undefined,
     undefined,
     root,
   );
   expect(run().status).toBe(0);
-  shellPre(`workit check --json --cwd ${root} ok`, { session }, undefined, undefined, root);
+  shellPre(`workit check --json --cwd '${root}' ok`, { session }, undefined, undefined, root);
   expect(run().status).toBe(0);
   expect(agentsOf(root)).toEqual(["a1", null]);
 });
@@ -222,7 +222,7 @@ test("Given an agent shell that exports its own WORKIT_AGENT_ID, When workit run
   };
   expect(runCheck(root, claude)).toBe(0);
   shellPre(
-    `workit check --json --cwd ${root} ok`,
+    `workit check --json --cwd '${root}' ok`,
     { session, agent: "a1" },
     undefined,
     undefined,
