@@ -20,7 +20,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { readProc, upsertProc } from "@/packages/workit-core/src/store/threads/procs";
+import type { SqlDb } from "@/packages/workit-core/src/store/threads/sqlite";
 import {
+  beginWrite,
   openThreadsStore,
   ThreadsBusyError,
   ThreadsSchemaError,
@@ -300,6 +302,54 @@ test.each(["bun", "node"] as const)(
     } finally {
       store.close();
     }
+  },
+);
+
+/** A connection whose BEGIN IMMEDIATE answers SQLITE_BUSY at once, without a busy handler. */
+const busyAtOnce = (committing: boolean) => {
+  let version = 0;
+  let attempts = 0;
+  const db: SqlDb = {
+    exec: (sql) => {
+      if (sql !== "BEGIN IMMEDIATE") return;
+      attempts++;
+      throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    },
+    // Another writer committing between every attempt, or none at all.
+    get: () => ({ data_version: committing ? ++version : version }),
+    run: () => 0,
+    all: () => [],
+    close: () => {},
+  };
+  return { db, attempts: () => attempts };
+};
+
+test.each([
+  ["no other writer commits", false, 100],
+  ["other writers keep committing", true, 20],
+] as const)(
+  "Given SQLite answering busy at once and %s, When a writer waits, Then it backs off 5 ms doubling to 50 and gives up in bounded time",
+  (_, committing, waitMs) => {
+    const { db, attempts } = busyAtOnce(committing);
+    const pauses: number[] = [];
+    const started = Date.now();
+    let failure: unknown;
+    try {
+      beginWrite(db, "/x/threads.db", waitMs, (ms) => {
+        pauses.push(ms);
+        Bun.sleepSync(ms);
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ThreadsBusyError);
+    // Every failed attempt but the last sleeps: no spinning.
+    expect(pauses.length).toBeGreaterThan(0);
+    expect(attempts()).toBe(pauses.length + 1);
+    expect(pauses.slice(0, 5)).toEqual([5, 10, 20, 40, 50].slice(0, pauses.length));
+    expect(Math.max(...pauses)).toBeLessThanOrEqual(50);
+    // Without commits the wait ends at waitMs; with them, at 12 busy timeouts.
+    expect(Date.now() - started).toBeLessThan(waitMs * 12 + 1000);
   },
 );
 

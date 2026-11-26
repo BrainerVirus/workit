@@ -192,6 +192,14 @@ const BUSY_SLICE_MS = 250;
 /** A waiter that sees other writers commit keeps waiting, up to this many busy timeouts in all. */
 const BUSY_PROGRESS_LIMIT = 12;
 
+/** An attempt that fails faster than this did not wait in SQLite's busy handler. */
+const BUSY_FAST_FAIL_MS = 5;
+
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const sleep = (ms: number): void => {
+  Atomics.wait(pause, 0, 0, ms);
+};
+
 /** Changes whenever another connection commits; undefined when it cannot be read just now. */
 const dataVersion = (db: SqlDb): number | undefined => {
   try {
@@ -210,12 +218,21 @@ const dataVersion = (db: SqlDb): number | undefined => {
  * busy timeout counts from the last commit any other connection made: a
  * writer that keeps committing is progress, while a lock held with no commit
  * for the whole timeout (a stuck or long transaction) is ThreadsBusyError.
+ * SQLite can also answer busy at once, without its handler: then the loop
+ * sleeps itself, 5 ms doubling up to 50, and never spins.
  */
-const begin = (db: SqlDb, file: string, waitMs: number): void => {
+export const beginWrite = (
+  db: SqlDb,
+  file: string,
+  waitMs: number,
+  pauseFor: (ms: number) => void = sleep,
+): void => {
   const start = Date.now();
   let quietSince = start;
   let seen = dataVersion(db);
+  let backoff = 0;
   for (;;) {
+    const attempt = Date.now();
     try {
       db.exec("BEGIN IMMEDIATE");
       return;
@@ -229,12 +246,16 @@ const begin = (db: SqlDb, file: string, waitMs: number): void => {
       }
       if (now - quietSince >= waitMs || now - start >= waitMs * BUSY_PROGRESS_LIMIT)
         throw new ThreadsBusyError(file, waitMs, { cause: error });
+      if (now - attempt < BUSY_FAST_FAIL_MS) {
+        backoff = Math.min(backoff === 0 ? 5 : backoff * 2, 50);
+        pauseFor(backoff);
+      } else backoff = 0;
     }
   }
 };
 
 const transaction = <T>(db: SqlDb, file: string, waitMs: number, body: () => T): T => {
-  begin(db, file, waitMs);
+  beginWrite(db, file, waitMs);
   try {
     const result = body();
     db.exec("COMMIT");
@@ -262,11 +283,6 @@ const migrate = (db: SqlDb, file: string, waitMs: number): void =>
       { version: String(SCHEMA_VERSION) },
     );
   });
-
-const pause = new Int32Array(new SharedArrayBuffer(4));
-const sleep = (ms: number): void => {
-  Atomics.wait(pause, 0, 0, ms);
-};
 
 /**
  * Brings an open file to WAL at SCHEMA_VERSION, refusing a newer schema
