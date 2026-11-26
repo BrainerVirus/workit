@@ -100,6 +100,7 @@ import {
 import { planLeads, readFanout, selectFanout, type FanoutFile } from "@workit-dev/core/src/fanout";
 import { currentBranch, headSha, resolveRef } from "@workit-dev/core/src/git/rev";
 import {
+  foreignHostSessionRefusal,
   issuedTokenMatches,
   namesOwnDerivedSession,
   sessionClaimRefusal,
@@ -703,9 +704,11 @@ export async function run(argv: string[], ioIn: Io): Promise<number> {
   if (values.set !== undefined && !derivedSession(claimed))
     return emit(io, fail("blocked", setSessionError(claimed), { unblock: SET_SESSION_UNBLOCK }));
   const token = values.token ?? io.env.WORKIT_SESSION_TOKEN ?? null;
+  // A self verdict is not checked as a claim, but disagreeing host variables
+  // would still record it under a session nothing vouches for (#986).
   const refusal =
     claimed === null
-      ? null
+      ? foreignHostSessionRefusal(io.env, null)
       : sessionClaimRefusal(io.env, claimed, io.cwd, {
           token,
           flag: acting.source === "flag",

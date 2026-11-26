@@ -423,16 +423,8 @@ export function sessionClaimRefusal(
 ): SessionClaimRefusal | null {
   const real = realHostSession(env);
   const host = family(real.host);
-  // Another host's variable in a Claude Code shell (#981): an agent there can
-  // set one by hand (`OPENCODE_SESSION_ID=x workit …`), and a host nested in
-  // Claude Code's Bash looks the same, so nothing vouches for the id it names.
-  const foreign = real.kind === "derived" ? foreignHostVariable(env) : null;
-  if (foreign)
-    return {
-      error: `foreign_host_session: ${foreign} names another host's session (${real.host}) in a Claude Code shell, so nothing vouches for ${claimed}`,
-      unblock:
-        "run workit without that variable: a verifier or reviewer passes the --session and --token its SubagentStart context names; a real OpenCode, Pi or Codex session records from a shell Claude Code did not start",
-    };
+  const foreign = foreignHostSessionRefusal(env, claimed);
+  if (foreign) return foreign;
   // A host that always sets its own variable, named without it: the variable
   // was removed (`env -u OPENCODE_SESSION_ID`), so nothing vouches for the id.
   if (real.kind !== "derived" && host !== null && HOST_SET_VARIABLE[host])
@@ -483,20 +475,84 @@ const unboundRefusal = (claimed: string): SessionClaimRefusal => ({
   unblock: `only that subagent acts as ${claimed}: it passes --token exactly as its SubagentStart context names it (or WORKIT_SESSION_TOKEN); anyone else spawns their own verifier`,
 });
 
-/** Variables only Claude Code's own shell carries: its SessionStart export aside, the ones it sets itself. */
-const CLAUDE_CODE_MARKS = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] as const;
+/**
+ * Variables only one host's own agent shell carries besides its session
+ * variable: Claude Code's (its SessionStart export aside) and Cursor's, whose
+ * shell has no session variable at all.
+ */
+const HOST_MARKS: ReadonlyArray<readonly [string, string]> = [
+  ["CLAUDECODE", "claude_code"],
+  ["CLAUDE_CODE_ENTRYPOINT", "claude_code"],
+  ["CURSOR_AGENT", "cursor"],
+];
+
+const HOST_LABELS: Readonly<Record<string, string>> = {
+  claude_code: "Claude Code",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  pi: "Pi",
+  codex: "Codex",
+};
+
+const FOREIGN_UNBLOCK =
+  "run workit without that variable: a verifier or reviewer passes the --session and --token its SubagentStart context names; a real OpenCode, Pi or Codex session records from a shell no other host started";
 
 /**
- * The other host's session variable this shell reads, when the shell is Claude
- * Code's (WORKIT_HOST=claude_code, CLAUDECODE or CLAUDE_CODE_ENTRYPOINT); null otherwise.
+ * Host session variables this shell cannot vouch for (#981, #986), on every host.
+ * Each name the shell carries says which host it is: WORKIT_HOST, a mark only
+ * that host's own shell carries (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+ * CURSOR_AGENT), and each host session variable (OPENCODE_SESSION_ID,
+ * PI_SESSION_ID, CODEX_THREAD_ID: each host sets only its own, and an OpenCode
+ * child or Pi worker names its lead in WORKIT_SESSION_ID, never in a second
+ * variable). Two names that disagree are refused, whichever one wins:
+ *   - a host session variable that names another host than any other name;
+ *   - two host session variables;
+ *   - WORKIT_HOST naming another host than a mark.
+ * A host nested in another host's shell reads the same, so it is refused too.
+ * `claimed`: the session the call acts as, for the message; null for `--self`.
  */
-const foreignHostVariable = (env: NodeJS.ProcessEnv): string | null => {
-  const claude =
-    env.WORKIT_HOST?.trim() === "claude_code" ||
-    CLAUDE_CODE_MARKS.some((name) => env[name]?.trim());
-  if (!claude) return null;
-  return HOST_SESSION_VARS.find(([key]) => env[key]?.trim())?.[0] ?? null;
-};
+export function foreignHostSessionRefusal(
+  env: NodeJS.ProcessEnv,
+  claimed: string | null,
+): SessionClaimRefusal | null {
+  const declared = env.WORKIT_HOST?.trim();
+  const shellNames: Array<{ host: string; source: string }> = [
+    ...(declared
+      ? [{ host: family(declared) ?? declared, source: `WORKIT_HOST=${declared}` }]
+      : []),
+    ...HOST_MARKS.filter(([name]) => env[name]?.trim()).map(([name, host]) => ({
+      host,
+      source: name,
+    })),
+  ];
+  const set = HOST_SESSION_VARS.filter(([key]) => env[key]?.trim()).map(([key, host]) => ({
+    key,
+    session: host(env),
+    host: family(host(env)) ?? "",
+  }));
+  const vouches = claimed ?? "the session it names";
+  for (const variable of set) {
+    const other = shellNames.find((name) => name.host !== variable.host);
+    if (other)
+      return {
+        error: `foreign_host_session: ${variable.key} names another host's session (${variable.session}) where ${other.source} names ${HOST_LABELS[other.host] ?? other.host}, so nothing vouches for ${vouches}`,
+        unblock: FOREIGN_UNBLOCK,
+      };
+  }
+  if (set.length > 1)
+    return {
+      error: `foreign_host_session: ${set.map(({ key }) => key).join(" and ")} are set together, and a host sets only its own session variable, so nothing vouches for ${vouches}`,
+      unblock: FOREIGN_UNBLOCK,
+    };
+  const [first, ...rest] = shellNames;
+  const clash = first ? rest.find((name) => name.host !== first.host) : undefined;
+  if (first && clash)
+    return {
+      error: `foreign_host_session: ${first.source} names another host than ${clash.source} (${HOST_LABELS[clash.host] ?? clash.host}), so nothing vouches for ${vouches}`,
+      unblock: FOREIGN_UNBLOCK,
+    };
+  return null;
+}
 
 /** Hosts that always put their own session variable in the agent's shell. */
 const HOST_SET_VARIABLE: Readonly<Record<string, string>> = {
