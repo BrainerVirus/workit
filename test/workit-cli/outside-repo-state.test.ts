@@ -343,10 +343,23 @@ test("Given a lock a dead mover left, When a mover takes the lock, Then it takes
   staleLockFile(lock);
   const release = takeMoveLock(target);
   expect(release).not.toBeNull();
-  expect(readFileSync(lock, "utf8")).toBe(`${process.pid}\n`);
+  expect(readFileSync(lock, "utf8")).toMatch(new RegExp(`^${process.pid} [0-9a-f-]{36}\\n$`, "u"));
   expect(asides(lock)).toEqual([]);
   release!();
   expect(existsSync(lock)).toBe(false);
+});
+
+test("Given a holder whose lock was taken over as stale, When it releases, Then the new holder's lock stays", () => {
+  const target = path.join(tempDir(), "store");
+  const lock = `${target}.lock`;
+  const release = takeMoveLock(target);
+  expect(release).not.toBeNull();
+  // Another mover judged it stale, took it over and wrote its own lock.
+  rmSync(lock);
+  const theirs = `${process.pid} another-movers-nonce\n`;
+  writeFileSync(lock, theirs);
+  release!();
+  expect(readFileSync(lock, "utf8")).toBe(theirs);
 });
 
 test("Given a stale lock replaced by a fresh one between the judgment and the takeover, Then the fresh lock stays and the mover skips", () => {
