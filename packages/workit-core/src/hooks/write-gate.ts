@@ -46,7 +46,13 @@ import {
   type RawInvocation,
 } from "./raw-git";
 import { segmentsOf, type Segment, type ShellDialect } from "./shell-words";
-import { CMD_VAR, LOADER_ENV, powershellTextWriter, windowsStatementWriter } from "./windows-reads";
+import {
+  CMD_VAR,
+  EXEMPT_LOADER,
+  LOADER_ENV,
+  powershellTextWriter,
+  windowsStatementWriter,
+} from "./windows-reads";
 
 const NONE: HookDecision = { kind: "none" };
 
@@ -1600,9 +1606,6 @@ const commandWords = (words: readonly string[]): string[] => {
   return words.slice(start);
 };
 
-/** LOADER_ENV as the shell spells it: names are case-sensitive. */
-const POSIX_LOADER = new RegExp(LOADER_ENV.source);
-
 /**
  * The word before a command (an assignment, or one `export`, `env` or
  * another declarer and their options take) that sets a name changing what a
@@ -1613,9 +1616,9 @@ const loaderAssignment = (words: readonly string[]): string | undefined => {
   for (const word of words) {
     const name = /^(\w+)\+?=/.exec(word)?.[1];
     // The values a judge's git may take (worktree-confine.ts judgeGit): no program, no lock.
-    if (/^(?:(?:GIT_)?PAGER=cat|GIT_OPTIONAL_LOCKS=0)$/.test(word)) continue;
+    if (EXEMPT_LOADER.test(word)) continue;
     if (name !== undefined) {
-      if (POSIX_LOADER.test(name)) return word.split("=")[0];
+      if (LOADER_ENV.test(name)) return word.split("=")[0];
     } else if (!DECLARERS.has(word) && word !== "env" && !word.startsWith("-")) return undefined;
   }
   return undefined;
